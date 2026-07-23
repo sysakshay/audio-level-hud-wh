@@ -1,0 +1,23 @@
+# Build output and IDE files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+*.userosset
+*.sln.docstates
+
+# Windhawk temp artifacts
+build/
+dist/
+.agents/scratch/
