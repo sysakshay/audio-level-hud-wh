@@ -17,11 +17,14 @@ A lightweight, always-on-top, Fluent 2-styled desktop overlay for Windows that
 displays real-time VU meters for both **Microphone Input** and **System Audio
 Output (Desktop Loopback)**.
 
+![Preview](https://raw.githubusercontent.com/sysakshay/audio-level-hud-wh/main/previews/preview1.png)
+![Settings Preview](https://raw.githubusercontent.com/sysakshay/audio-level-hud-wh/main/previews/preview2.png)
+
 ## Key Features
 - **DirectComposition & DXGI SwapChain**: Hardware-accelerated presentation with `DXGI_ALPHA_MODE_PREMULTIPLIED` for pixel-perfect anti-aliased rounded corners without GDI artifacts or corner leak lines.
 - **Liquid Glass Design**: Real-time DWM acrylic blur sampling, specular rim lighting, top glass reflection sheen, and 3D glossy level meter pills.
 - **Dual Real-time VU Meters**: WASAPI peak meters for mic capture and system audio output.
-- **Overlay Customization**: Corner snapping, custom dimensions, opacity, and click-through mode.
+- **Overlay Customization**: Corner snapping, custom drag-and-drop positioning, opacity, and click-through mode.
 - **Global Hotkey Toggle**: Default `Ctrl+Shift+M` shortcut to show/hide the HUD.
 
 ---
@@ -46,13 +49,7 @@ Output (Desktop Loopback)**.
     - top-left: Top Left
     - bottom-right: Bottom Right
     - bottom-left: Bottom Left
-    - custom: Custom Coordinates
-- offset_x: 24
-  $name: Horizontal Offset (px)
-  $description: 'Distance in pixels from screen horizontal edge. 🔴 ɴᴏᴛᴇ: ᴛʜɪꜱ ᴏɴʟʏ ᴀᴘᴘʟɪᴇꜱ ᴡʜᴇɴ "ᴄᴜꜱᴛᴏᴍ ᴄᴏᴏʀᴅɪɴᴀᴛᴇꜱ" ɪꜱ ꜱᴇʟᴇᴄᴛᴇᴅ ᴀʙᴏᴠᴇ!'
-- offset_y: 24
-  $name: Vertical Offset (px)
-  $description: 'Distance in pixels from screen vertical edge. 🔴 ɴᴏᴛᴇ: ᴛʜɪꜱ ᴏɴʟʏ ᴀᴘᴘʟɪᴇꜱ ᴡʜᴇɴ "ᴄᴜꜱᴛᴏᴍ ᴄᴏᴏʀᴅɪɴᴀᴛᴇꜱ" ɪꜱ ꜱᴇʟᴇᴄᴛᴇᴅ ᴀʙᴏᴠᴇ!'
+    - custom: Custom (double click and drag the hud overlay to your desired location)
 - card_opacity: '88'
   $name: Card Opacity
   $description: Opacity of the HUD background (%)
@@ -207,8 +204,6 @@ struct AudioEndpointTracker {
 // Global Mod Settings
 struct ModSettings {
   WCHAR position[32] = L"top-right";
-  int offsetX = 24;
-  int offsetY = 24;
   int opacity = 88;
   BOOL showMic = TRUE;
   BOOL showSystem = TRUE;
@@ -537,8 +532,6 @@ static void LoadModSettings() {
     Wh_FreeStringSetting(strVal);
   }
 
-  g_Settings.offsetX = Wh_GetIntSetting(L"offset_x");
-  g_Settings.offsetY = Wh_GetIntSetting(L"offset_y");
   PCWSTR opStr = Wh_GetStringSetting(L"card_opacity");
   if (opStr) {
     g_Settings.opacity = _wtoi(opStr);
@@ -605,8 +598,8 @@ static void PositionHudWindow() {
   int y = workArea.top + 24;
 
   if (_wcsicmp(g_Settings.position, L"custom") == 0) {
-    x = workArea.left + g_Settings.offsetX;
-    y = workArea.top + g_Settings.offsetY;
+    x = Wh_GetIntValue(L"custom_x", workArea.right - 500 - 24);
+    y = Wh_GetIntValue(L"custom_y", workArea.top + 24);
   } else if (_wcsicmp(g_Settings.position, L"top-left") == 0) {
     x = workArea.left + 24;
     y = workArea.top + 24;
@@ -1556,6 +1549,17 @@ static LRESULT CALLBACK HudWndProc(HWND hWnd, UINT message, WPARAM wParam,
       return HTCAPTION; // Allow dragging everywhere else
     }
     return hit;
+  }
+
+  case WM_EXITSIZEMOVE: {
+    if (_wcsicmp(g_Settings.position, L"custom") == 0) {
+      RECT rect;
+      if (GetWindowRect(hWnd, &rect)) {
+        Wh_SetIntValue(L"custom_x", rect.left);
+        Wh_SetIntValue(L"custom_y", rect.top);
+      }
+    }
+    return 0;
   }
 
   case WM_DISPLAYCHANGE:
