@@ -63,6 +63,9 @@ Output (Desktop Loopback)**.
     - both: Show Both Meters
     - mic: Show Microphone Only
     - system: Show System Output Only
+- show_labels: true
+  $name: Show Text Labels
+  $description: Display "Mic" and "System" text labels next to the icons. Uncheck to hide labels for a more compact look.
 - position: top-right
   $name: Screen Position
   $description: Screen corner position to dock the overlay HUD.
@@ -148,6 +151,7 @@ Output (Desktop Loopback)**.
 #define FLYOUT_CTRL_SCALE    3009
 #define FLYOUT_CTRL_SCALE_LBL 3010
 #define FLYOUT_CTRL_PEAKHOLD 3011
+#define FLYOUT_CTRL_SHOWLABELS 3012
 
 #ifndef PKEY_Device_FriendlyName
 static const PROPERTYKEY PKEY_Device_FriendlyName_Local = {
@@ -157,6 +161,16 @@ static const PROPERTYKEY PKEY_Device_FriendlyName_Local = {
      {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}},
     14};
 #define PKEY_Device_FriendlyName PKEY_Device_FriendlyName_Local
+#endif
+
+#ifndef PKEY_Device_DeviceDesc
+static const PROPERTYKEY PKEY_Device_DeviceDesc_Local = {
+    {0xa45c254e,
+     0xdf1c,
+     0x4efd,
+     {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}},
+    2};
+#define PKEY_Device_DeviceDesc PKEY_Device_DeviceDesc_Local
 #endif
 
 // Interface definition for IAudioMeterInformation in case endpointvolume.h only forward-declares it
@@ -202,6 +216,7 @@ typedef BOOL(WINAPI *pfnSetWindowCompositionAttribute)(
 // Structure for Audio Endpoint metering
 struct AudioEndpointTracker {
   IMMDevice *pDevice = nullptr;
+  IAudioClient *pAudioClient = nullptr;
   IAudioMeterInformation *pMeter = nullptr;
   IAudioEndpointVolume *pVolume = nullptr;
   float currentLevel = 0.0f;
@@ -213,6 +228,11 @@ struct AudioEndpointTracker {
   BOOL isClipping = FALSE;
 
   void Release() {
+    if (pAudioClient) {
+      pAudioClient->Stop();
+      pAudioClient->Release();
+      pAudioClient = nullptr;
+    }
     if (pMeter) {
       pMeter->Release();
       pMeter = nullptr;
@@ -234,11 +254,12 @@ struct ModSettings {
   int opacity = 88;
   BOOL showMic = TRUE;
   BOOL showSystem = TRUE;
+  BOOL showLabels = TRUE;
   BOOL clickThrough = TRUE;
   WCHAR toggleHotkey[64] = L"Ctrl+Shift+M";
   int fpsLimit = 30;
   WCHAR colorTheme[32] = L"fluent";
-  WCHAR micDevice[64] = L"default";
+  WCHAR micDevice[256] = L"default";
   int hudScale = 100;
   BOOL enablePeakHold = TRUE;
   int peakHoldDuration = 300;
@@ -322,6 +343,76 @@ static void ApplyAcrylicBlur(HWND hWnd) {
   // handles compositing natively via premultiplied alpha — no accent policy needed.
 }
 
+static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targetName) {
+  if (!g_pEnumerator) return nullptr;
+  IMMDeviceCollection *pCol = nullptr;
+  if (FAILED(g_pEnumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &pCol)) || !pCol) {
+    return nullptr;
+  }
+
+  UINT count = 0;
+  pCol->GetCount(&count);
+  IMMDevice* pMatchedDevice = nullptr;
+
+  std::wstring targetLower = targetName;
+  std::transform(targetLower.begin(), targetLower.end(), targetLower.begin(), ::towlower);
+
+  for (UINT i = 0; i < count; i++) {
+    IMMDevice *pCandidate = nullptr;
+    if (SUCCEEDED(pCol->Item(i, &pCandidate)) && pCandidate) {
+      // 1. Check Device ID match
+      LPWSTR pwszID = nullptr;
+      if (SUCCEEDED(pCandidate->GetId(&pwszID)) && pwszID) {
+        std::wstring idLower = pwszID;
+        CoTaskMemFree(pwszID);
+        std::transform(idLower.begin(), idLower.end(), idLower.begin(), ::towlower);
+        if (idLower == targetLower) {
+          pMatchedDevice = pCandidate;
+          break;
+        }
+      }
+
+      // 2. Check Friendly Name & Device Desc match
+      IPropertyStore *pProps = nullptr;
+      if (SUCCEEDED(pCandidate->OpenPropertyStore(STGM_READ, &pProps)) && pProps) {
+        std::wstring nameStr;
+        PROPVARIANT varName;
+        PropVariantInit(&varName);
+        if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName)) && varName.vt == VT_LPWSTR && varName.pwszVal) {
+          nameStr = varName.pwszVal;
+        }
+        PropVariantClear(&varName);
+
+        if (nameStr.empty()) {
+          PROPVARIANT varDesc;
+          PropVariantInit(&varDesc);
+          if (SUCCEEDED(pProps->GetValue(PKEY_Device_DeviceDesc, &varDesc)) && varDesc.vt == VT_LPWSTR && varDesc.pwszVal) {
+            nameStr = varDesc.pwszVal;
+          }
+          PropVariantClear(&varDesc);
+        }
+
+        pProps->Release();
+
+        if (!nameStr.empty()) {
+          std::wstring friendlyLower = nameStr;
+          std::transform(friendlyLower.begin(), friendlyLower.end(), friendlyLower.begin(), ::towlower);
+
+          if (friendlyLower.find(targetLower) != std::wstring::npos || targetLower.find(friendlyLower) != std::wstring::npos) {
+            pMatchedDevice = pCandidate;
+            Wh_Log(L"Matched audio endpoint (%s): %s", flow == eCapture ? L"Capture" : L"Render", nameStr.c_str());
+            break;
+          }
+        }
+      }
+      pCandidate->Release();
+    }
+  }
+
+  pCol->Release();
+  return pMatchedDevice;
+}
+
 // Initialize Audio Endpoint (Mic capture or System render)
 static void InitAudioTracker(EDataFlow dataFlow,
                              AudioEndpointTracker &tracker) {
@@ -344,50 +435,13 @@ static void InitAudioTracker(EDataFlow dataFlow,
       g_pEnumerator->GetDefaultAudioEndpoint(eCapture, eCommunications,
                                              &pDevice);
     } else {
-      IMMDeviceCollection *pCol = nullptr;
-      HRESULT hrCol = g_pEnumerator->EnumAudioEndpoints(
-          eCapture, DEVICE_STATE_ACTIVE, &pCol);
-      if (SUCCEEDED(hrCol) && pCol) {
-        UINT count = 0;
-        pCol->GetCount(&count);
-
-        for (UINT i = 0; i < count; i++) {
-          IMMDevice *pCandidate = nullptr;
-          if (SUCCEEDED(pCol->Item(i, &pCandidate)) && pCandidate) {
-            IPropertyStore *pProps = nullptr;
-            if (SUCCEEDED(pCandidate->OpenPropertyStore(STGM_READ, &pProps)) &&
-                pProps) {
-              PROPVARIANT varName;
-              PropVariantInit(&varName);
-              if (SUCCEEDED(
-                      pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
-                if (varName.vt == VT_LPWSTR && varName.pwszVal) {
-                  std::wstring friendlyName = varName.pwszVal;
-                  std::wstring targetName = g_Settings.micDevice;
-
-                  std::transform(friendlyName.begin(), friendlyName.end(),
-                                 friendlyName.begin(), ::towlower);
-                  std::transform(targetName.begin(), targetName.end(),
-                                 targetName.begin(), ::towlower);
-
-                  if (friendlyName.find(targetName) != std::wstring::npos) {
-                    pDevice = pCandidate;
-                    pDevice->AddRef();
-                    Wh_Log(L"Matched microphone endpoint: %s", varName.pwszVal);
-                  }
-                }
-                PropVariantClear(&varName);
-              }
-              pProps->Release();
-            }
-            pCandidate->Release();
-            if (pDevice)
-              break;
-          }
-        }
-        pCol->Release();
+      // Search capture endpoints first
+      pDevice = FindDeviceByNameOrId(eCapture, g_Settings.micDevice);
+      // If not found in capture endpoints, search render endpoints (for Voicemeeter / virtual outputs)
+      if (!pDevice) {
+        pDevice = FindDeviceByNameOrId(eRender, g_Settings.micDevice);
       }
-
+      // If still not found, fallback to default capture endpoint
       if (!pDevice) {
         g_pEnumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &pDevice);
       }
@@ -398,8 +452,39 @@ static void InitAudioTracker(EDataFlow dataFlow,
 
   if (pDevice) {
     tracker.pDevice = pDevice;
-    pDevice->Activate(IID_IAudioMeterInfo, CLSCTX_ALL, NULL,
-                      (void **)&tracker.pMeter);
+
+    // Active WASAPI audio client capture stream.
+    // Windows WASAPI requires an active IAudioClient stream on capture endpoints (microphones)
+    // so the Windows Audio Engine pumps microphone hardware audio samples into WASAPI metering.
+    IAudioClient *pAudioClient = nullptr;
+    if (SUCCEEDED(pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void **)&pAudioClient)) && pAudioClient) {
+      WAVEFORMATEX *pwfx = nullptr;
+      if (SUCCEEDED(pAudioClient->GetMixFormat(&pwfx)) && pwfx) {
+        HRESULT hrInit = pAudioClient->Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            0, // Default shared stream flags
+            10000000, // 1 second buffer (100ns units)
+            0,
+            pwfx,
+            NULL);
+        CoTaskMemFree(pwfx);
+        if (SUCCEEDED(hrInit)) {
+          pAudioClient->Start();
+          tracker.pAudioClient = pAudioClient;
+        } else {
+          pAudioClient->Release();
+        }
+      } else {
+        pAudioClient->Release();
+      }
+    }
+
+    if (FAILED(pDevice->Activate(IID_IAudioMeterInfo, CLSCTX_ALL, NULL, (void **)&tracker.pMeter)) || !tracker.pMeter) {
+      if (tracker.pAudioClient) {
+        tracker.pAudioClient->GetService(IID_IAudioMeterInfo, (void **)&tracker.pMeter);
+      }
+    }
+
     pDevice->Activate(IID_IAudioEndVol, CLSCTX_ALL, NULL,
                       (void **)&tracker.pVolume);
   }
@@ -661,11 +746,13 @@ static void LoadModSettings() {
     Wh_FreeStringSetting(strVal);
   }
 
-  WCHAR savedMic[64] = {0};
+  g_Settings.showLabels = Wh_GetIntValue(L"rt_showLabels", Wh_GetIntSetting(L"show_labels"));
+
+  WCHAR savedMic[256] = {0};
   if (Wh_GetStringValue(L"rt_micDevice", savedMic, ARRAYSIZE(savedMic))) {
-    StringCchCopyW(g_Settings.micDevice, 64, savedMic);
+    StringCchCopyW(g_Settings.micDevice, 256, savedMic);
   } else {
-    StringCchCopyW(g_Settings.micDevice, 64, L"default");
+    StringCchCopyW(g_Settings.micDevice, 256, L"default");
   }
 
 }
@@ -1121,7 +1208,7 @@ static void RenderHud() {
   float currentY = 0.0f;
 
   const int TOTAL_SEGMENTS = 25;
-  const float BAR_LEFT = 100.0f;
+  const float BAR_LEFT = g_Settings.showLabels ? 100.0f : 48.0f;
   const float BAR_RIGHT = std::max(BAR_LEFT + 120.0f, size.width - 85.0f);
   const float BAR_TOTAL_WIDTH = BAR_RIGHT - BAR_LEFT;
   const float SEG_GAP = 2.5f;
@@ -1137,8 +1224,8 @@ static void RenderHud() {
       g_pD2DContext->DrawTextW(iconChar, 1, g_pIconFontFormat, iconRect, pTextBrush);
     }
 
-    // B. Left-aligned Label ("Mic" / "System")
-    if (g_pLabelFontFormat && pTextBrush) {
+    // B. Left-aligned Label ("Mic" / "System") - optional display
+    if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
       D2D1_RECT_F labelRect = D2D1::RectF(42.0f, currentY, 96.0f, currentY + rowHeight);
       g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
     }
@@ -1311,7 +1398,7 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
     // Section header text: "Opacity"
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(180, 180, 195));
-    HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT hFont = CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     HFONT hOld = (HFONT)SelectObject(hdc, hFont);
     RECT lblRc = {14, 14, 120, 34};
     DrawTextW(hdc, L"Opacity", -1, &lblRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1319,30 +1406,33 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
     DrawTextW(hdc, L"HUD Scale", -1, &scaleRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     RECT secRc = {14, 110, 200, 128};
     DrawTextW(hdc, L"Display", -1, &secRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT sec2Rc = {14, 222, 200, 240};
+    RECT sec2Rc = {14, 242, 200, 260};
     DrawTextW(hdc, L"Input Device", -1, &sec2Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT sec3Rc = {14, 284, 200, 302};
+    RECT sec3Rc = {14, 304, 200, 322};
     DrawTextW(hdc, L"Behavior", -1, &sec3Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     // Subtle section separator lines
     HPEN hPen = CreatePen(PS_SOLID, 1, RGB(50, 50, 65));
     HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
     MoveToEx(hdc, 14, 54, NULL); LineTo(hdc, rc.right - 14, 54);
     MoveToEx(hdc, 14, 104, NULL); LineTo(hdc, rc.right - 14, 104);
-    MoveToEx(hdc, 14, 216, NULL); LineTo(hdc, rc.right - 14, 216);
-    MoveToEx(hdc, 14, 278, NULL); LineTo(hdc, rc.right - 14, 278);
+    MoveToEx(hdc, 14, 236, NULL); LineTo(hdc, rc.right - 14, 236);
+    MoveToEx(hdc, 14, 298, NULL); LineTo(hdc, rc.right - 14, 298);
     SelectObject(hdc, hOldPen);
     DeleteObject(hPen);
     SelectObject(hdc, hOld);
+    DeleteObject(hFont);
     EndPaint(hWnd, &ps);
     return 0;
   }
 
-  // Make all child controls transparent over the dark background
+  // Make all child controls transparent with bright light-grey text over the dark background
   case WM_CTLCOLORSTATIC:
-  case WM_CTLCOLORBTN: {
+  case WM_CTLCOLORBTN:
+  case WM_CTLCOLORLISTBOX:
+  case WM_CTLCOLOREDIT: {
     HDC hdcCtrl = (HDC)wParam;
     SetBkMode(hdcCtrl, TRANSPARENT);
-    SetTextColor(hdcCtrl, RGB(210, 210, 225));
+    SetTextColor(hdcCtrl, RGB(240, 240, 250));
     if (!g_hFlyoutBgBrush) g_hFlyoutBgBrush = CreateSolidBrush(RGB(20, 20, 30));
     return (LRESULT)g_hFlyoutBgBrush;
   }
@@ -1397,6 +1487,9 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       } else if (id == FLYOUT_CTRL_SYS_ONLY) {
         g_Settings.showMic = FALSE;
         g_Settings.showSystem = TRUE;
+      } else if (id == FLYOUT_CTRL_SHOWLABELS) {
+        g_Settings.showLabels = checked;
+        Wh_SetIntValue(L"rt_showLabels", checked);
       } else if (id == FLYOUT_CTRL_CLICKTHRU) {
         g_Settings.clickThrough = checked;
         if (g_hHudWnd) {
@@ -1414,9 +1507,9 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       HWND hCombo = (HWND)lParam;
       int index = (int)SendMessageW(hCombo, CB_GETCURSEL, 0, 0);
       if (index != CB_ERR) {
-        WCHAR selText[64] = {0};
+        WCHAR selText[256] = {0};
         SendMessageW(hCombo, CB_GETLBTEXT, index, (LPARAM)selText);
-        StringCchCopyW(g_Settings.micDevice, 64, selText);
+        StringCchCopyW(g_Settings.micDevice, 256, selText);
         Wh_SetStringValue(L"rt_micDevice", selText);
         
         // Re-initialize audio tracker for mic with new device
@@ -1459,7 +1552,7 @@ static void ShowSettingsFlyout() {
   GetWindowRect(g_hHudWnd, &hudRect);
 
   const int FLY_W = 250;
-  const int FLY_H = 374;
+  const int FLY_H = 400;
 
   int x = hudRect.right  - FLY_W - 4;
   int y = hudRect.bottom + 6;
@@ -1496,10 +1589,19 @@ static void ShowSettingsFlyout() {
     }
   }
 
+  HFONT hControlFont = CreateFontW(-13, 0, 0, 0, FW_REGULAR, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
   HMODULE hInst = GetModuleHandle(NULL);
   const int PAD_X = 14;
   const int SLIDER_Y = 12;
-  const int ROW_H = 26;
+  const int ROW_H = 24;
+
+  // Helper to style controls with font & transparent uxtheme override
+  auto ApplyControlStyle = [&](HWND hCtrl) {
+    if (!hCtrl) return;
+    SetWindowTheme(hCtrl, L"", L"");
+    if (hControlFont) SendMessageW(hCtrl, WM_SETFONT, (WPARAM)hControlFont, TRUE);
+  };
 
   // ── Opacity Row ──────────────────────────────────────────────
   HWND hSlider = CreateWindowExW(0, TRACKBAR_CLASS, L"",
@@ -1508,7 +1610,6 @@ static void ShowSettingsFlyout() {
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_OPACITY, hInst, NULL);
   SendMessageW(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
   SendMessageW(hSlider, TBM_SETPOS,   TRUE, g_Settings.opacity);
-  SetWindowTheme(hSlider, L"DarkMode_Explorer", NULL);
 
   // Percentage label next to slider
   WCHAR opBuf[16];
@@ -1517,7 +1618,7 @@ static void ShowSettingsFlyout() {
       WS_CHILD | WS_VISIBLE | SS_CENTER,
       PAD_X + 80 + 106, SLIDER_Y + 4, 36, 18,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_OP_LBL, hInst, NULL);
-  SetWindowTheme(hOpLbl, L"DarkMode_Explorer", NULL);
+  ApplyControlStyle(hOpLbl);
 
   // ── HUD Scale Row ────────────────────────────────────────────
   HWND hScaleSlider = CreateWindowExW(0, TRACKBAR_CLASS, L"",
@@ -1526,7 +1627,6 @@ static void ShowSettingsFlyout() {
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SCALE, hInst, NULL);
   SendMessageW(hScaleSlider, TBM_SETRANGE, TRUE, MAKELPARAM(25, 100));
   SendMessageW(hScaleSlider, TBM_SETPOS,   TRUE, g_Settings.hudScale);
-  SetWindowTheme(hScaleSlider, L"DarkMode_Explorer", NULL);
 
   WCHAR scaleBuf[16];
   swprintf_s(scaleBuf, L"%d%%", g_Settings.hudScale);
@@ -1534,23 +1634,33 @@ static void ShowSettingsFlyout() {
       WS_CHILD | WS_VISIBLE | SS_CENTER,
       PAD_X + 80 + 106, 58 + 4, 36, 18,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SCALE_LBL, hInst, NULL);
-  SetWindowTheme(hScaleLbl, L"DarkMode_Explorer", NULL);
+  ApplyControlStyle(hScaleLbl);
 
   // ── Display Row ──────────────────────────────────────────────
   HWND hRadBoth = CreateWindowExW(0, WC_BUTTON, L"  Show Both Meters",
       WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
       PAD_X + 2, 130, FLY_W - PAD_X * 2, ROW_H,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_BOTH, hInst, NULL);
+  ApplyControlStyle(hRadBoth);
   
   HWND hRadMic = CreateWindowExW(0, WC_BUTTON, L"  Show Microphone Only",
       WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-      PAD_X + 2, 156, FLY_W - PAD_X * 2, ROW_H,
+      PAD_X + 2, 154, FLY_W - PAD_X * 2, ROW_H,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_MIC_ONLY, hInst, NULL);
+  ApplyControlStyle(hRadMic);
       
   HWND hRadSys = CreateWindowExW(0, WC_BUTTON, L"  Show System Output Only",
       WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-      PAD_X + 2, 182, FLY_W - PAD_X * 2, ROW_H,
+      PAD_X + 2, 178, FLY_W - PAD_X * 2, ROW_H,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SYS_ONLY, hInst, NULL);
+  ApplyControlStyle(hRadSys);
+
+  HWND hShowLblChk = CreateWindowExW(0, WC_BUTTON, L"  Show Text Labels (\"Mic\" / \"System\")",
+      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+      PAD_X + 2, 204, FLY_W - PAD_X * 2, ROW_H,
+      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SHOWLABELS, hInst, NULL);
+  SendMessageW(hShowLblChk, BM_SETCHECK, g_Settings.showLabels ? BST_CHECKED : BST_UNCHECKED, 0);
+  ApplyControlStyle(hShowLblChk);
 
   if (g_Settings.showMic && g_Settings.showSystem) {
     SendMessageW(hRadBoth, BM_SETCHECK, BST_CHECKED, 0);
@@ -1559,50 +1669,52 @@ static void ShowSettingsFlyout() {
   } else if (g_Settings.showSystem) {
     SendMessageW(hRadSys, BM_SETCHECK, BST_CHECKED, 0);
   }
-  
-  SetWindowTheme(hRadBoth, L"DarkMode_Explorer", NULL);
-  SetWindowTheme(hRadMic,  L"DarkMode_Explorer", NULL);
-  SetWindowTheme(hRadSys,  L"DarkMode_Explorer", NULL);
 
   // ── Input Device Row ──────────────────────────────────────────
   HWND hMicCombo = CreateWindowExW(0, WC_COMBOBOX, L"",
       CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_CHILD | WS_OVERLAPPED | WS_VISIBLE | WS_VSCROLL,
-      PAD_X, 242, FLY_W - PAD_X * 2, 200, // 200 is dropdown list height
+      PAD_X, 262, FLY_W - PAD_X * 2, 200, // 200 is dropdown list height
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_MIC_COMBO, hInst, NULL);
-  
-  SetWindowTheme(hMicCombo, L"DarkMode_Explorer", NULL);
+  ApplyControlStyle(hMicCombo);
 
-  // Populate Combobox
+  // Populate Combobox with active capture AND render endpoints (Voicemeeter outputs / inputs / microphones)
   SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)L"default");
   SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)L"communications");
 
   IMMDeviceEnumerator *pEnum = nullptr;
   if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
                                  __uuidof(IMMDeviceEnumerator), (void **)&pEnum))) {
-    IMMDeviceCollection *pCol = nullptr;
-    if (SUCCEEDED(pEnum->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &pCol))) {
-      UINT count = 0;
-      pCol->GetCount(&count);
-      for (UINT i = 0; i < count; i++) {
-        IMMDevice *pEndpoint = nullptr;
-        if (SUCCEEDED(pCol->Item(i, &pEndpoint))) {
-          IPropertyStore *pProps = nullptr;
-          if (SUCCEEDED(pEndpoint->OpenPropertyStore(STGM_READ, &pProps))) {
-            PROPVARIANT varName;
-            PropVariantInit(&varName);
-            if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
-              if (varName.vt == VT_LPWSTR && varName.pwszVal) {
-                SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)varName.pwszVal);
+    auto AddEndpointsToCombo = [&](EDataFlow flow) {
+      IMMDeviceCollection *pCol = nullptr;
+      if (SUCCEEDED(pEnum->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &pCol)) && pCol) {
+        UINT count = 0;
+        pCol->GetCount(&count);
+        for (UINT i = 0; i < count; i++) {
+          IMMDevice *pEndpoint = nullptr;
+          if (SUCCEEDED(pCol->Item(i, &pEndpoint)) && pEndpoint) {
+            IPropertyStore *pProps = nullptr;
+            if (SUCCEEDED(pEndpoint->OpenPropertyStore(STGM_READ, &pProps)) && pProps) {
+              PROPVARIANT varName;
+              PropVariantInit(&varName);
+              if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
+                if (varName.vt == VT_LPWSTR && varName.pwszVal) {
+                  if (SendMessageW(hMicCombo, CB_FINDSTRINGEXACT, -1, (LPARAM)varName.pwszVal) == CB_ERR) {
+                    SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)varName.pwszVal);
+                  }
+                }
+                PropVariantClear(&varName);
               }
-              PropVariantClear(&varName);
+              pProps->Release();
             }
-            pProps->Release();
+            pEndpoint->Release();
           }
-          pEndpoint->Release();
         }
+        pCol->Release();
       }
-      pCol->Release();
-    }
+    };
+
+    AddEndpointsToCombo(eCapture);
+    AddEndpointsToCombo(eRender);
     pEnum->Release();
   }
 
@@ -1621,17 +1733,17 @@ static void ShowSettingsFlyout() {
   // ── Behavior Row ─────────────────────────────────────────────
   HWND hCtChk = CreateWindowExW(0, WC_BUTTON, L"  Click-Through",
       WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      PAD_X + 2, 304, FLY_W - PAD_X * 2, ROW_H,
+      PAD_X + 2, 324, FLY_W - PAD_X * 2, ROW_H,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_CLICKTHRU, hInst, NULL);
   SendMessageW(hCtChk, BM_SETCHECK, g_Settings.clickThrough ? BST_CHECKED : BST_UNCHECKED, 0);
-  SetWindowTheme(hCtChk, L"DarkMode_Explorer", NULL);
+  ApplyControlStyle(hCtChk);
 
   HWND hPkChk = CreateWindowExW(0, WC_BUTTON, L"  Show Peak Hold Marker",
       WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      PAD_X + 2, 330, FLY_W - PAD_X * 2, ROW_H,
+      PAD_X + 2, 348, FLY_W - PAD_X * 2, ROW_H,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_PEAKHOLD, hInst, NULL);
   SendMessageW(hPkChk, BM_SETCHECK, g_Settings.enablePeakHold ? BST_CHECKED : BST_UNCHECKED, 0);
-  SetWindowTheme(hPkChk, L"DarkMode_Explorer", NULL);
+  ApplyControlStyle(hPkChk);
 
   ShowWindow(g_hFlyoutWnd, SW_SHOWNOACTIVATE);
   SetForegroundWindow(g_hFlyoutWnd);
