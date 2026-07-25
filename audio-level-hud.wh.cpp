@@ -1651,7 +1651,7 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       if (hOldFont) SelectObject(hdc, hOldFont);
       return TRUE;
     }
-    break;
+    return 0;
   }
 
   case WM_HSCROLL: {
