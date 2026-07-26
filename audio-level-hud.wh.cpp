@@ -314,6 +314,7 @@ static IDCompositionVisual *g_pDCompVisual = nullptr;
 static IDWriteFactory *g_pDWriteFactory = nullptr;
 static IDWriteTextFormat *g_pIconFontFormat = nullptr;
 static IDWriteTextFormat *g_pLabelFontFormat = nullptr;
+static IDWriteTextFormat *g_pLabelFontFormatVert = nullptr;
 static IDWriteTextFormat *g_pValueFontFormat = nullptr;
 static IDWriteTextFormat *g_pValueFontFormatVert = nullptr;
 
@@ -839,17 +840,24 @@ static void LoadModSettings() {
     Wh_FreeStringSetting(strVal);
   }
 
-  strVal = Wh_GetStringSetting(L"layout");
-  if (strVal) {
-    StringCchCopyW(g_Settings.layout, 32, strVal);
-    Wh_FreeStringSetting(strVal);
-  } else {
-    StringCchCopyW(g_Settings.layout, 32, L"horizontal");
-  }
+  PCWSTR layoutStr = Wh_GetStringSetting(L"layout");
+  std::wstring whLayout = layoutStr ? layoutStr : L"horizontal";
+  if (layoutStr)
+    Wh_FreeStringSetting(layoutStr);
 
-  WCHAR savedLayout[32] = {0};
-  if (Wh_GetStringValue(L"rt_layout", savedLayout, ARRAYSIZE(savedLayout))) {
-    StringCchCopyW(g_Settings.layout, 32, savedLayout);
+  WCHAR lastWhLayout[32] = {0};
+  Wh_GetStringValue(L"rt_lastWhLayout", lastWhLayout, ARRAYSIZE(lastWhLayout));
+  if (whLayout != lastWhLayout) {
+    Wh_SetStringValue(L"rt_lastWhLayout", whLayout.c_str());
+    Wh_DeleteValue(L"rt_layout");
+    StringCchCopyW(g_Settings.layout, 32, whLayout.c_str());
+  } else {
+    WCHAR savedLayout[32] = {0};
+    if (Wh_GetStringValue(L"rt_layout", savedLayout, ARRAYSIZE(savedLayout))) {
+      StringCchCopyW(g_Settings.layout, 32, savedLayout);
+    } else {
+      StringCchCopyW(g_Settings.layout, 32, whLayout.c_str());
+    }
   }
 
   // 1. Scale
@@ -1016,8 +1024,13 @@ static void PositionHudWindow() {
   if (scale < 0.25f)
     scale = 0.25f;
 
-  int baseW = isVertical ? 104 : 500;
-  int baseH = isVertical ? 420 : 104;
+  int activeChannels =
+      (g_Settings.showMic ? 1 : 0) + (g_Settings.showSystem ? 1 : 0);
+  if (activeChannels < 1)
+    activeChannels = 1;
+
+  int baseW = isVertical ? (activeChannels == 2 ? 136 : 76) : 500;
+  int baseH = isVertical ? 420 : (activeChannels == 1 ? 62 : 104);
 
   int w = (int)roundf(baseW * scale);
   int h = (int)roundf(baseH * scale);
@@ -1202,7 +1215,6 @@ static HRESULT InitDirectComposition(HWND hWnd) {
     float scale = g_Settings.hudScale / 100.0f;
     if (scale < 0.25f)
       scale = 0.25f;
-    // Compensates font size for smaller HUD scales (e.g. 50%, 65%) so text remains crisp and readable
     float fontComp = (scale < 1.0f) ? (1.0f / sqrtf(scale)) : 1.0f;
 
     hr = g_pDWriteFactory->CreateTextFormat(
@@ -1219,6 +1231,7 @@ static HRESULT InitDirectComposition(HWND hWnd) {
       g_pIconFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
       g_pIconFontFormat->SetParagraphAlignment(
           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pIconFontFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
     g_pDWriteFactory->CreateTextFormat(
@@ -1229,6 +1242,18 @@ static HRESULT InitDirectComposition(HWND hWnd) {
       g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
       g_pLabelFontFormat->SetParagraphAlignment(
           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pLabelFontFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    g_pDWriteFactory->CreateTextFormat(
+        L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * fontComp, L"en-us",
+        &g_pLabelFontFormatVert);
+    if (g_pLabelFontFormatVert) {
+      g_pLabelFontFormatVert->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+      g_pLabelFontFormatVert->SetParagraphAlignment(
+          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pLabelFontFormatVert->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
     g_pDWriteFactory->CreateTextFormat(
@@ -1238,15 +1263,17 @@ static HRESULT InitDirectComposition(HWND hWnd) {
       g_pValueFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
       g_pValueFontFormat->SetParagraphAlignment(
           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pValueFontFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
     g_pDWriteFactory->CreateTextFormat(
         L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 10.5f * fontComp, L"en-us", &g_pValueFontFormatVert);
+        DWRITE_FONT_STRETCH_NORMAL, 11.0f * fontComp, L"en-us", &g_pValueFontFormatVert);
     if (g_pValueFontFormatVert) {
       g_pValueFontFormatVert->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
       g_pValueFontFormatVert->SetParagraphAlignment(
           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pValueFontFormatVert->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
   }
 
@@ -1261,6 +1288,10 @@ static void CleanupDirectComposition() {
   if (g_pLabelFontFormat) {
     g_pLabelFontFormat->Release();
     g_pLabelFontFormat = nullptr;
+  }
+  if (g_pLabelFontFormatVert) {
+    g_pLabelFontFormatVert->Release();
+    g_pLabelFontFormatVert = nullptr;
   }
   if (g_pValueFontFormat) {
     g_pValueFontFormat->Release();
@@ -1527,12 +1558,11 @@ static void RenderHud() {
 
       // Channel Label ("Mic" / "System") right below icon
       float labelBottom = 34.0f;
-      if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
+      if (g_Settings.showLabels && (g_pLabelFontFormatVert || g_pLabelFontFormat) && pTextBrush) {
         labelBottom = 52.0f;
-        D2D1_RECT_F labelRect = D2D1::RectF(colCenterX - 35.0f, 32.0f, colCenterX + 35.0f, 50.0f);
-        g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
-        g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        D2D1_RECT_F labelRect = D2D1::RectF(colCenterX - 30.0f, 32.0f, colCenterX + 30.0f, 50.0f);
+        IDWriteTextFormat *pLblFmt = g_pLabelFontFormatVert ? g_pLabelFontFormatVert : g_pLabelFontFormat;
+        g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), pLblFmt, labelRect, pTextBrush);
       }
 
       // Vertical Level Meter Bar (25 pills stacked bottom-to-top)
@@ -1623,16 +1653,16 @@ static void RenderHud() {
             pCurTextBrush = pClipBrush;
           }
           if (tracker.currentLevel <= 0.0001f) {
-            StringCchCopyW(dbText, 32, L"-60dB");
+            StringCchCopyW(dbText, 32, L"-60 dB");
           } else {
             float dB = 20.0f * log10f(tracker.currentLevel);
             if (dB < -60.0f) dB = -60.0f;
             if (dB > 0.0f) dB = 0.0f;
-            swprintf_s(dbText, L"%ddB", (int)roundf(dB));
+            swprintf_s(dbText, L"%d dB", (int)roundf(dB));
           }
         }
 
-        D2D1_RECT_F valueRect = D2D1::RectF(colCenterX - 24.0f, size.height - 30.0f, colCenterX + 24.0f, size.height - 4.0f);
+        D2D1_RECT_F valueRect = D2D1::RectF(colCenterX - 26.0f, size.height - 32.0f, colCenterX + 26.0f, size.height - 4.0f);
         g_pD2DContext->DrawTextW(dbText, (UINT32)wcslen(dbText), pValFmt, valueRect, pCurTextBrush);
       }
 
@@ -1652,8 +1682,8 @@ static void RenderHud() {
     float rowHeight = size.height / (float)activeChannels;
     float currentY = 0.0f;
 
-    const float BAR_LEFT = g_Settings.showLabels ? (96.0f * (0.85f + 0.15f * fontComp)) : 48.0f;
-    const float BAR_RIGHT = std::max(BAR_LEFT + 100.0f, size.width - (56.0f * fontComp));
+    const float BAR_LEFT = g_Settings.showLabels ? (122.0f * (0.85f + 0.15f * fontComp)) : 48.0f;
+    const float BAR_RIGHT = std::max(BAR_LEFT + 100.0f, size.width - (68.0f * fontComp));
     const float BAR_TOTAL_WIDTH = BAR_RIGHT - BAR_LEFT;
     const float SEG_WIDTH = (BAR_TOTAL_WIDTH - (TOTAL_SEGMENTS - 1) * SEG_GAP) / (float)TOTAL_SEGMENTS;
 
@@ -1662,13 +1692,13 @@ static void RenderHud() {
 
       // Icon
       if (g_pIconFontFormat && pTextBrush) {
-        D2D1_RECT_F iconRect = D2D1::RectF(16.0f, currentY, 40.0f, currentY + rowHeight);
+        D2D1_RECT_F iconRect = D2D1::RectF(14.0f, currentY, 38.0f, currentY + rowHeight);
         g_pD2DContext->DrawTextW(iconChar, 1, g_pIconFontFormat, iconRect, pTextBrush);
       }
 
       // Label
       if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
-        D2D1_RECT_F labelRect = D2D1::RectF(42.0f, currentY, BAR_LEFT - 6.0f, currentY + rowHeight);
+        D2D1_RECT_F labelRect = D2D1::RectF(48.0f, currentY, BAR_LEFT - 6.0f, currentY + rowHeight);
         g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
       }
 
