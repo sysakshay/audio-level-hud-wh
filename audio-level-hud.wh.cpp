@@ -18,14 +18,21 @@ displays real-time VU meters for both **Microphone Input** and **System Audio
 Output (Desktop Loopback)**.
 
 ![Preview](https://raw.githubusercontent.com/sysakshay/audio-level-hud-wh/main/previews/preview1.png)
-![Settings Preview](https://raw.githubusercontent.com/sysakshay/audio-level-hud-wh/main/previews/preview2.png)
+![Settings
+Preview](https://raw.githubusercontent.com/sysakshay/audio-level-hud-wh/main/previews/preview2.png)
 
 ## Key Features
-- **DirectComposition & DXGI SwapChain**: Hardware-accelerated presentation with `DXGI_ALPHA_MODE_PREMULTIPLIED` for pixel-perfect anti-aliased rounded corners without GDI artifacts or corner leak lines.
-- **Liquid Glass Design**: Real-time DWM acrylic blur sampling, specular rim lighting, top glass reflection sheen, and 3D glossy level meter pills.
-- **Dual Real-time VU Meters**: WASAPI peak meters for mic capture and system audio output.
-- **Overlay Customization**: Corner snapping, custom drag-and-drop positioning, opacity, and click-through mode.
-- **Global Hotkey Toggle**: Default `Ctrl+Shift+M` shortcut to show/hide the HUD.
+- **DirectComposition & DXGI SwapChain**: Hardware-accelerated presentation with
+`DXGI_ALPHA_MODE_PREMULTIPLIED` for pixel-perfect anti-aliased rounded corners
+without GDI artifacts or corner leak lines.
+- **Liquid Glass Design**: Real-time DWM acrylic blur sampling, specular rim
+lighting, top glass reflection sheen, and 3D glossy level meter pills.
+- **Dual Real-time VU Meters**: WASAPI peak meters for mic capture and system
+audio output.
+- **Overlay Customization**: Corner snapping, custom drag-and-drop positioning,
+opacity, and click-through mode.
+- **Global Hotkey Toggle**: Default `Ctrl+Shift+M` shortcut to show/hide the
+HUD.
 
 ---
 *Created with Windhawk.*
@@ -58,14 +65,14 @@ Output (Desktop Loopback)**.
     - '1000': 1000 ms (Long Hold)
 - show_meters: both
   $name: Show Audio Meters
-  $description: 'Choose which audio meters to display. 💡 ᴛᴏ ꜱᴇʟᴇᴄᴛ ʏᴏᴜʀ ɪɴᴘᴜᴛ ᴅᴇᴠɪᴄᴇ, ᴘʟᴇᴀꜱᴇ ᴜꜱᴇ ᴛʜᴇ ᴛʜʀᴇᴇ-ᴅᴏᴛ (⋮) ᴍᴇɴᴜ ᴏɴ ᴛʜᴇ ʜᴜᴅ ɪᴛꜱᴇʟꜰ!'
+  $description: Choose which audio meters to display.
   $options:
     - both: Show Both Meters
     - mic: Show Microphone Only
     - system: Show System Output Only
 - show_labels: true
   $name: Show Text Labels
-  $description: Display "Mic" and "System" text labels next to the icons. Uncheck to hide labels for a more compact look.
+  $description: Display Mic and System text labels next to the icons.
 - position: top-right
   $name: Screen Position
   $description: Screen corner position to dock the overlay HUD.
@@ -74,7 +81,7 @@ Output (Desktop Loopback)**.
     - top-left: Top Left
     - bottom-right: Bottom Right
     - bottom-left: Bottom Left
-    - custom: Custom (double click and drag the hud overlay to your desired location)
+    - custom: Custom (drag overlay to desired location)
 - card_opacity: '88'
   $name: Card Opacity
   $description: Opacity of the HUD background (%)
@@ -86,7 +93,6 @@ Output (Desktop Loopback)**.
     - '75': 75% - Medium
     - '88': 88% - Default
     - '100': 100% - Opaque
-
 - click_through: true
   $name: Click-Through Mode
   $description: Allow mouse clicks to pass through the HUD to underlying windows.
@@ -112,18 +118,23 @@ Output (Desktop Loopback)**.
     - emerald: Emerald Glow (Green & Lime)
     - sunset: Sunset Amber (Orange & Gold)
     - monochrome: Minimal Silver
+- layout: horizontal
+  $name: HUD Layout Orientation
+  $description: Choose between traditional horizontal bar HUD or vertical sidebar dock.
+  $options:
+    - horizontal: Horizontal Bar (Default)
+    - vertical: Vertical Sidebar
 */
 // ==/WindhawkModSettings==
 
 #include <algorithm>
-#include <commctrl.h>
-#include <uxtheme.h>
 #include <audiopolicy.h>
-#include <d3d11.h>
-#include <dcomp.h>
+#include <commctrl.h>
 #include <d2d1.h>
 #include <d2d1_1.h>
 #include <d2d1helper.h>
+#include <d3d11.h>
+#include <dcomp.h>
 #include <dwmapi.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
@@ -133,29 +144,32 @@ Output (Desktop Loopback)**.
 #include <propidl.h>
 #include <string>
 #include <strsafe.h>
+#include <uxtheme.h>
 #include <windhawk_api.h>
 #include <windows.h>
 #include <windowsx.h>
 
-#define HUD_WINDOW_CLASS     L"Windhawk_AudioLevelHud_Class"
-#define FLYOUT_WINDOW_CLASS  L"Windhawk_AudioLevelHud_Flyout"
-#define HUD_TIMER_ID         1001
-#define HUD_HOTKEY_ID        2001
+#define HUD_WINDOW_CLASS L"Windhawk_AudioLevelHud_Class"
+#define FLYOUT_WINDOW_CLASS L"Windhawk_AudioLevelHud_Flyout"
+#define HUD_TIMER_ID 1001
+#define HUD_HOTKEY_ID 2001
 #define HUD_CLICKTHRU_HOTKEY_ID 2002
 #define WM_HUD_RELOAD_SETTINGS (WM_USER + 101)
 // Flyout control IDs
-#define FLYOUT_CTRL_OPACITY  3001
-#define FLYOUT_CTRL_OP_LBL   3002
-#define FLYOUT_CTRL_BOTH     3003
+#define FLYOUT_CTRL_OPACITY 3001
+#define FLYOUT_CTRL_OP_LBL 3002
+#define FLYOUT_CTRL_BOTH 3003
 #define FLYOUT_CTRL_MIC_ONLY 3004
 #define FLYOUT_CTRL_SYS_ONLY 3005
 #define FLYOUT_CTRL_CLICKTHRU 3006
 #define FLYOUT_CTRL_MIC_COMBO 3007
-#define FLYOUT_CTRL_MIC_LBL  3008
-#define FLYOUT_CTRL_SCALE    3009
+#define FLYOUT_CTRL_MIC_LBL 3008
+#define FLYOUT_CTRL_SCALE 3009
 #define FLYOUT_CTRL_SCALE_LBL 3010
 #define FLYOUT_CTRL_PEAKHOLD 3011
 #define FLYOUT_CTRL_SHOWLABELS 3012
+#define FLYOUT_CTRL_LAYOUT_HORZ 3013
+#define FLYOUT_CTRL_LAYOUT_VERT 3014
 
 #ifndef PKEY_Device_FriendlyName
 static const PROPERTYKEY PKEY_Device_FriendlyName_Local = {
@@ -177,7 +191,8 @@ static const PROPERTYKEY PKEY_Device_DeviceDesc_Local = {
 #define PKEY_Device_DeviceDesc PKEY_Device_DeviceDesc_Local
 #endif
 
-// Interface definition for IAudioMeterInformation in case endpointvolume.h only forward-declares it
+// Interface definition for IAudioMeterInformation in case endpointvolume.h only
+// forward-declares it
 #ifndef __IAudioMeterInformation_INTERFACE_DEFINED__
 #define __IAudioMeterInformation_INTERFACE_DEFINED__
 struct IAudioMeterInformation : public IUnknown {
@@ -191,7 +206,8 @@ struct IAudioMeterInformation : public IUnknown {
 };
 #endif
 
-// Undocumented SetWindowCompositionAttribute definitions for native Windows Fluent Acrylic blur
+// Undocumented SetWindowCompositionAttribute definitions for native Windows
+// Fluent Acrylic blur
 typedef enum _ACCENT_STATE {
   ACCENT_DISABLED = 0,
   ACCENT_ENABLE_GRADIENT = 1,
@@ -268,12 +284,14 @@ struct ModSettings {
   int hudScale = 100;
   BOOL enablePeakHold = TRUE;
   int peakHoldDuration = 300;
+  WCHAR layout[32] = L"horizontal";
 };
 
 static ModSettings g_Settings;
 static HWND g_hHudWnd = NULL;
-static HWND g_hFlyoutWnd = NULL;     // Settings flyout popup window
-static HBRUSH g_hFlyoutBgBrush = NULL; // Reusable dark bg brush for flyout controls
+static HWND g_hFlyoutWnd = NULL; // Settings flyout popup window
+static HBRUSH g_hFlyoutBgBrush =
+    NULL; // Reusable dark bg brush for flyout controls
 static HANDLE g_hHudThread = NULL;
 static DWORD g_dwThreadId = 0;
 static BOOL g_bHudVisible = TRUE;
@@ -297,6 +315,7 @@ static IDWriteFactory *g_pDWriteFactory = nullptr;
 static IDWriteTextFormat *g_pIconFontFormat = nullptr;
 static IDWriteTextFormat *g_pLabelFontFormat = nullptr;
 static IDWriteTextFormat *g_pValueFontFormat = nullptr;
+static IDWriteTextFormat *g_pValueFontFormatVert = nullptr;
 
 // Helper COM GUID definitions
 static const CLSID CLSID_MMDevEnum = __uuidof(MMDeviceEnumerator);
@@ -323,7 +342,8 @@ static HRESULT InitDirectComposition(HWND hWnd);
 static void CleanupDirectComposition();
 static void RenderHud();
 // Flyout
-static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam,
+                                      LPARAM lParam);
 static void ShowSettingsFlyout();
 static void DismissFlyout();
 
@@ -334,44 +354,42 @@ static void DismissFlyout();
 #define ZBID_SYSTEM_TOOLS 7
 #endif
 
-typedef DWORD (WINAPI *pfnSetWindowBand)(HWND hWnd, HWND hwndInsertAfter, DWORD dwBand);
-typedef HWND (WINAPI *pfnCreateWindowInBandEx)(
-    DWORD dwExStyle,
-    LPCWSTR lpClassName,
-    LPCWSTR lpWindowName,
-    DWORD dwStyle,
-    int x,
-    int y,
-    int nWidth,
-    int nHeight,
-    HWND hWndParent,
-    HMENU hMenu,
-    HINSTANCE hInstance,
-    LPVOID lpParam,
-    DWORD dwBand,
-    DWORD dwTypeFlags);
+typedef DWORD(WINAPI *pfnSetWindowBand)(HWND hWnd, HWND hwndInsertAfter,
+                                        DWORD dwBand);
+typedef HWND(WINAPI *pfnCreateWindowInBandEx)(
+    DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle,
+    int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu,
+    HINSTANCE hInstance, LPVOID lpParam, DWORD dwBand, DWORD dwTypeFlags);
 
-static HWND CreateOverlayWindowInBand(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle, int x, int y, int width, int height) {
+static HWND CreateOverlayWindowInBand(DWORD dwExStyle, LPCWSTR lpClassName,
+                                      LPCWSTR lpWindowName, DWORD dwStyle,
+                                      int x, int y, int width, int height) {
   HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
   if (hUser32) {
     pfnCreateWindowInBandEx pCreateWindowInBandEx =
-        (pfnCreateWindowInBandEx)GetProcAddress(hUser32, "CreateWindowInBandEx");
+        (pfnCreateWindowInBandEx)GetProcAddress(hUser32,
+                                                "CreateWindowInBandEx");
     if (pCreateWindowInBandEx) {
       HWND hWnd = pCreateWindowInBandEx(
-          dwExStyle, lpClassName, lpWindowName, dwStyle,
-          x, y, width, height, NULL, NULL, GetModuleHandle(NULL), NULL, ZBID_UIACCESS, 0);
-      if (hWnd) return hWnd;
+          dwExStyle, lpClassName, lpWindowName, dwStyle, x, y, width, height,
+          NULL, NULL, GetModuleHandle(NULL), NULL, ZBID_UIACCESS, 0);
+      if (hWnd)
+        return hWnd;
     }
   }
-  return CreateWindowExW(dwExStyle, lpClassName, lpWindowName, dwStyle, x, y, width, height, NULL, NULL, GetModuleHandle(NULL), NULL);
+  return CreateWindowExW(dwExStyle, lpClassName, lpWindowName, dwStyle, x, y,
+                         width, height, NULL, NULL, GetModuleHandle(NULL),
+                         NULL);
 }
 
 static void EnsureWindowBandAndTopmost(HWND hWnd) {
-  if (!hWnd) return;
+  if (!hWnd)
+    return;
 
   HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
   if (hUser32) {
-    pfnSetWindowBand pSetWindowBand = (pfnSetWindowBand)GetProcAddress(hUser32, "SetWindowBand");
+    pfnSetWindowBand pSetWindowBand =
+        (pfnSetWindowBand)GetProcAddress(hUser32, "SetWindowBand");
     if (pSetWindowBand) {
       pSetWindowBand(hWnd, NULL, ZBID_UIACCESS);
     }
@@ -381,14 +399,25 @@ static void EnsureWindowBandAndTopmost(HWND hWnd) {
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
-
-// Logarithmic Audio dB VU Meter Ratio Mapping (-60 dB to 0 dB mapped to 0.0 to 1.0)
+// Logarithmic Audio dB VU Meter Ratio Mapping (-60 dB to 0 dB mapped to 0.0
+// to 1.0 with DAW-style expansion in the -20 dB to 0 dB range)
 static float LinearToMeterRatio(float linearLevel) {
-  if (linearLevel <= 0.001f) return 0.0f; // -60 dB floor
+  if (linearLevel <= 0.0001f)
+    return 0.0f; // -60 dB floor
   float dB = 20.0f * log10f(linearLevel);
-  if (dB < -60.0f) return 0.0f;
-  if (dB >= 0.0f) return 1.0f;
-  return (dB + 60.0f) / 60.0f;
+  if (dB < -60.0f)
+    return 0.0f;
+  if (dB >= 0.0f)
+    return 1.0f;
+
+  // DAW-style piecewise curve:
+  // -60 dB to -20 dB (40 dB range) maps to 0.0 .. 0.45 ratio
+  // -20 dB to 0 dB   (20 dB range) maps to 0.45 .. 1.0 ratio
+  if (dB < -20.0f) {
+    return 0.45f * ((dB + 60.0f) / 40.0f);
+  } else {
+    return 0.45f + 0.55f * ((dB + 20.0f) / 20.0f);
+  }
 }
 
 typedef enum PreferredAppMode {
@@ -399,15 +428,18 @@ typedef enum PreferredAppMode {
   Max
 } PreferredAppMode;
 
-typedef PreferredAppMode (WINAPI *pfnSetPreferredAppMode)(PreferredAppMode appMode);
-typedef BOOL (WINAPI *pfnAllowDarkModeForWindow)(HWND hWnd, BOOL allow);
+typedef PreferredAppMode(WINAPI *pfnSetPreferredAppMode)(
+    PreferredAppMode appMode);
+typedef BOOL(WINAPI *pfnAllowDarkModeForWindow)(HWND hWnd, BOOL allow);
 
 static void EnableDarkModeForControl(HWND hCtrl) {
-  if (!hCtrl) return;
+  if (!hCtrl)
+    return;
   HMODULE hUxtheme = GetModuleHandleW(L"uxtheme.dll");
   if (hUxtheme) {
     pfnAllowDarkModeForWindow pAllowDarkModeForWindow =
-        (pfnAllowDarkModeForWindow)GetProcAddress(hUxtheme, MAKEINTRESOURCEA(133));
+        (pfnAllowDarkModeForWindow)GetProcAddress(hUxtheme,
+                                                  MAKEINTRESOURCEA(133));
     if (pAllowDarkModeForWindow) {
       pAllowDarkModeForWindow(hCtrl, TRUE);
     }
@@ -426,10 +458,11 @@ static void ApplyAcrylicBlur(HWND hWnd) {
     return;
 
   // DWMWCP_DONOTROUND (1): Don't let DWM apply its own ~8px corner clip.
-  // With WS_EX_NOREDIRECTIONBITMAP + DirectComposition DXGI_ALPHA_MODE_PREMULTIPLIED,
-  // D2D's transparent (0,0,0,0) corner pixels define the visual shape naturally.
-  // DWMWCP_ROUND (2) conflicts by imposing a ~8px DWM clip over D2D's 16px curves,
-  // causing rectangular corner bleed artifacts.
+  // With WS_EX_NOREDIRECTIONBITMAP + DirectComposition
+  // DXGI_ALPHA_MODE_PREMULTIPLIED, D2D's transparent (0,0,0,0) corner pixels
+  // define the visual shape naturally. DWMWCP_ROUND (2) conflicts by imposing a
+  // ~8px DWM clip over D2D's 16px curves, causing rectangular corner bleed
+  // artifacts.
   DWORD cornerPref = 1; // DWMWCP_DONOTROUND = 1
   DwmSetWindowAttribute(hWnd, 33, &cornerPref, sizeof(cornerPref));
 
@@ -439,22 +472,28 @@ static void ApplyAcrylicBlur(HWND hWnd) {
   // alongside DirectComposition causes the DWM to apply acrylic to the full
   // rectangular window bounds, bleeding opaque blur outside the D2D rounded
   // rect and producing visible square corner artifacts. DirectComposition
-  // handles compositing natively via premultiplied alpha — no accent policy needed.
+  // handles compositing natively via premultiplied alpha — no accent policy
+  // needed.
 }
 
-static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targetName) {
-  if (!g_pEnumerator) return nullptr;
+static IMMDevice *FindDeviceByNameOrId(EDataFlow flow,
+                                       const std::wstring &targetName) {
+  if (!g_pEnumerator)
+    return nullptr;
   IMMDeviceCollection *pCol = nullptr;
-  if (FAILED(g_pEnumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &pCol)) || !pCol) {
+  if (FAILED(g_pEnumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE,
+                                               &pCol)) ||
+      !pCol) {
     return nullptr;
   }
 
   UINT count = 0;
   pCol->GetCount(&count);
-  IMMDevice* pMatchedDevice = nullptr;
+  IMMDevice *pMatchedDevice = nullptr;
 
   std::wstring targetLower = targetName;
-  std::transform(targetLower.begin(), targetLower.end(), targetLower.begin(), ::towlower);
+  std::transform(targetLower.begin(), targetLower.end(), targetLower.begin(),
+                 ::towlower);
 
   for (UINT i = 0; i < count; i++) {
     IMMDevice *pCandidate = nullptr;
@@ -464,7 +503,8 @@ static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targe
       if (SUCCEEDED(pCandidate->GetId(&pwszID)) && pwszID) {
         std::wstring idLower = pwszID;
         CoTaskMemFree(pwszID);
-        std::transform(idLower.begin(), idLower.end(), idLower.begin(), ::towlower);
+        std::transform(idLower.begin(), idLower.end(), idLower.begin(),
+                       ::towlower);
         if (idLower == targetLower) {
           pMatchedDevice = pCandidate;
           break;
@@ -473,11 +513,13 @@ static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targe
 
       // 2. Check Friendly Name & Device Desc match
       IPropertyStore *pProps = nullptr;
-      if (SUCCEEDED(pCandidate->OpenPropertyStore(STGM_READ, &pProps)) && pProps) {
+      if (SUCCEEDED(pCandidate->OpenPropertyStore(STGM_READ, &pProps)) &&
+          pProps) {
         std::wstring nameStr;
         PROPVARIANT varName;
         PropVariantInit(&varName);
-        if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName)) && varName.vt == VT_LPWSTR && varName.pwszVal) {
+        if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName)) &&
+            varName.vt == VT_LPWSTR && varName.pwszVal) {
           nameStr = varName.pwszVal;
         }
         PropVariantClear(&varName);
@@ -485,7 +527,8 @@ static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targe
         if (nameStr.empty()) {
           PROPVARIANT varDesc;
           PropVariantInit(&varDesc);
-          if (SUCCEEDED(pProps->GetValue(PKEY_Device_DeviceDesc, &varDesc)) && varDesc.vt == VT_LPWSTR && varDesc.pwszVal) {
+          if (SUCCEEDED(pProps->GetValue(PKEY_Device_DeviceDesc, &varDesc)) &&
+              varDesc.vt == VT_LPWSTR && varDesc.pwszVal) {
             nameStr = varDesc.pwszVal;
           }
           PropVariantClear(&varDesc);
@@ -495,11 +538,14 @@ static IMMDevice* FindDeviceByNameOrId(EDataFlow flow, const std::wstring& targe
 
         if (!nameStr.empty()) {
           std::wstring friendlyLower = nameStr;
-          std::transform(friendlyLower.begin(), friendlyLower.end(), friendlyLower.begin(), ::towlower);
+          std::transform(friendlyLower.begin(), friendlyLower.end(),
+                         friendlyLower.begin(), ::towlower);
 
-          if (friendlyLower.find(targetLower) != std::wstring::npos || targetLower.find(friendlyLower) != std::wstring::npos) {
+          if (friendlyLower.find(targetLower) != std::wstring::npos ||
+              targetLower.find(friendlyLower) != std::wstring::npos) {
             pMatchedDevice = pCandidate;
-            Wh_Log(L"Matched audio endpoint (%s): %s", flow == eCapture ? L"Capture" : L"Render", nameStr.c_str());
+            Wh_Log(L"Matched audio endpoint (%s): %s",
+                   flow == eCapture ? L"Capture" : L"Render", nameStr.c_str());
             break;
           }
         }
@@ -536,7 +582,8 @@ static void InitAudioTracker(EDataFlow dataFlow,
     } else {
       // Search capture endpoints first
       pDevice = FindDeviceByNameOrId(eCapture, g_Settings.micDevice);
-      // If not found in capture endpoints, search render endpoints (for Voicemeeter / virtual outputs)
+      // If not found in capture endpoints, search render endpoints (for
+      // Voicemeeter / virtual outputs)
       if (!pDevice) {
         pDevice = FindDeviceByNameOrId(eRender, g_Settings.micDevice);
       }
@@ -553,19 +600,20 @@ static void InitAudioTracker(EDataFlow dataFlow,
     tracker.pDevice = pDevice;
 
     // Active WASAPI audio client capture stream.
-    // Windows WASAPI requires an active IAudioClient stream on capture endpoints (microphones)
-    // so the Windows Audio Engine pumps microphone hardware audio samples into WASAPI metering.
+    // Windows WASAPI requires an active IAudioClient stream on capture
+    // endpoints (microphones) so the Windows Audio Engine pumps microphone
+    // hardware audio samples into WASAPI metering.
     IAudioClient *pAudioClient = nullptr;
-    if (SUCCEEDED(pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void **)&pAudioClient)) && pAudioClient) {
+    if (SUCCEEDED(pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL,
+                                    (void **)&pAudioClient)) &&
+        pAudioClient) {
       WAVEFORMATEX *pwfx = nullptr;
       if (SUCCEEDED(pAudioClient->GetMixFormat(&pwfx)) && pwfx) {
-        HRESULT hrInit = pAudioClient->Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            0, // Default shared stream flags
-            10000000, // 1 second buffer (100ns units)
-            0,
-            pwfx,
-            NULL);
+        HRESULT hrInit =
+            pAudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                     0,        // Default shared stream flags
+                                     10000000, // 1 second buffer (100ns units)
+                                     0, pwfx, NULL);
         CoTaskMemFree(pwfx);
         if (SUCCEEDED(hrInit)) {
           pAudioClient->Start();
@@ -578,9 +626,12 @@ static void InitAudioTracker(EDataFlow dataFlow,
       }
     }
 
-    if (FAILED(pDevice->Activate(IID_IAudioMeterInfo, CLSCTX_ALL, NULL, (void **)&tracker.pMeter)) || !tracker.pMeter) {
+    if (FAILED(pDevice->Activate(IID_IAudioMeterInfo, CLSCTX_ALL, NULL,
+                                 (void **)&tracker.pMeter)) ||
+        !tracker.pMeter) {
       if (tracker.pAudioClient) {
-        tracker.pAudioClient->GetService(IID_IAudioMeterInfo, (void **)&tracker.pMeter);
+        tracker.pAudioClient->GetService(IID_IAudioMeterInfo,
+                                         (void **)&tracker.pMeter);
       }
     }
 
@@ -609,8 +660,11 @@ static void UpdateAudioLevels() {
           g_MicTracker.pVolume->GetMute(&g_MicTracker.isMuted);
         }
 
-        float dt = (g_MicTracker.lastUpdateTick > 0) ? (currentTick - g_MicTracker.lastUpdateTick) / 1000.0f : 0.033f;
-        if (dt > 0.1f) dt = 0.033f;
+        float dt = (g_MicTracker.lastUpdateTick > 0)
+                       ? (currentTick - g_MicTracker.lastUpdateTick) / 1000.0f
+                       : 0.033f;
+        if (dt > 0.1f)
+          dt = 0.033f;
         g_MicTracker.lastUpdateTick = currentTick;
 
         if (rawPeak >= g_MicTracker.currentLevel) {
@@ -621,12 +675,14 @@ static void UpdateAudioLevels() {
         }
 
         int holdDuration = g_Settings.peakHoldDuration;
-        if (holdDuration <= 0) holdDuration = 300;
+        if (holdDuration <= 0)
+          holdDuration = 300;
 
         if (rawPeak >= g_MicTracker.peakHold) {
           g_MicTracker.peakHold = rawPeak;
           g_MicTracker.peakHoldTime = currentTick;
-        } else if (currentTick - g_MicTracker.peakHoldTime > (DWORD)holdDuration) {
+        } else if (currentTick - g_MicTracker.peakHoldTime >
+                   (DWORD)holdDuration) {
           float newPeak = g_MicTracker.peakHold - dt * 1.2f;
           g_MicTracker.peakHold = std::max(g_MicTracker.currentLevel, newPeak);
         }
@@ -657,8 +713,12 @@ static void UpdateAudioLevels() {
           g_SystemTracker.pVolume->GetMute(&g_SystemTracker.isMuted);
         }
 
-        float dt = (g_SystemTracker.lastUpdateTick > 0) ? (currentTick - g_SystemTracker.lastUpdateTick) / 1000.0f : 0.033f;
-        if (dt > 0.1f) dt = 0.033f;
+        float dt =
+            (g_SystemTracker.lastUpdateTick > 0)
+                ? (currentTick - g_SystemTracker.lastUpdateTick) / 1000.0f
+                : 0.033f;
+        if (dt > 0.1f)
+          dt = 0.033f;
         g_SystemTracker.lastUpdateTick = currentTick;
 
         if (rawPeak >= g_SystemTracker.currentLevel) {
@@ -669,14 +729,17 @@ static void UpdateAudioLevels() {
         }
 
         int holdDuration = g_Settings.peakHoldDuration;
-        if (holdDuration <= 0) holdDuration = 300;
+        if (holdDuration <= 0)
+          holdDuration = 300;
 
         if (rawPeak >= g_SystemTracker.peakHold) {
           g_SystemTracker.peakHold = rawPeak;
           g_SystemTracker.peakHoldTime = currentTick;
-        } else if (currentTick - g_SystemTracker.peakHoldTime > (DWORD)holdDuration) {
+        } else if (currentTick - g_SystemTracker.peakHoldTime >
+                   (DWORD)holdDuration) {
           float newPeak = g_SystemTracker.peakHold - dt * 1.2f;
-          g_SystemTracker.peakHold = std::max(g_SystemTracker.currentLevel, newPeak);
+          g_SystemTracker.peakHold =
+              std::max(g_SystemTracker.currentLevel, newPeak);
         }
 
         if (rawPeak >= 0.98f) {
@@ -691,7 +754,8 @@ static void UpdateAudioLevels() {
 }
 
 static void ParseAndRegisterHotkey(HWND hWnd, int id, PCWSTR hotkeyStr) {
-  if (!hWnd || !hotkeyStr || wcslen(hotkeyStr) == 0) return;
+  if (!hWnd || !hotkeyStr || wcslen(hotkeyStr) == 0)
+    return;
 
   UINT fsModifiers = MOD_NOREPEAT;
   UINT vkCode = 0;
@@ -715,18 +779,30 @@ static void ParseAndRegisterHotkey(HWND hWnd, int id, PCWSTR hotkeyStr) {
       if ((ch >= L'A' && ch <= L'Z') || (ch >= L'0' && ch <= L'9')) {
         vkCode = ch;
       }
-    } else if (_wcsicmp(token, L"F1") == 0) vkCode = VK_F1;
-    else if (_wcsicmp(token, L"F2") == 0) vkCode = VK_F2;
-    else if (_wcsicmp(token, L"F3") == 0) vkCode = VK_F3;
-    else if (_wcsicmp(token, L"F4") == 0) vkCode = VK_F4;
-    else if (_wcsicmp(token, L"F5") == 0) vkCode = VK_F5;
-    else if (_wcsicmp(token, L"F6") == 0) vkCode = VK_F6;
-    else if (_wcsicmp(token, L"F7") == 0) vkCode = VK_F7;
-    else if (_wcsicmp(token, L"F8") == 0) vkCode = VK_F8;
-    else if (_wcsicmp(token, L"F9") == 0) vkCode = VK_F9;
-    else if (_wcsicmp(token, L"F10") == 0) vkCode = VK_F10;
-    else if (_wcsicmp(token, L"F11") == 0) vkCode = VK_F11;
-    else if (_wcsicmp(token, L"F12") == 0) vkCode = VK_F12;
+    } else if (_wcsicmp(token, L"F1") == 0)
+      vkCode = VK_F1;
+    else if (_wcsicmp(token, L"F2") == 0)
+      vkCode = VK_F2;
+    else if (_wcsicmp(token, L"F3") == 0)
+      vkCode = VK_F3;
+    else if (_wcsicmp(token, L"F4") == 0)
+      vkCode = VK_F4;
+    else if (_wcsicmp(token, L"F5") == 0)
+      vkCode = VK_F5;
+    else if (_wcsicmp(token, L"F6") == 0)
+      vkCode = VK_F6;
+    else if (_wcsicmp(token, L"F7") == 0)
+      vkCode = VK_F7;
+    else if (_wcsicmp(token, L"F8") == 0)
+      vkCode = VK_F8;
+    else if (_wcsicmp(token, L"F9") == 0)
+      vkCode = VK_F9;
+    else if (_wcsicmp(token, L"F10") == 0)
+      vkCode = VK_F10;
+    else if (_wcsicmp(token, L"F11") == 0)
+      vkCode = VK_F11;
+    else if (_wcsicmp(token, L"F12") == 0)
+      vkCode = VK_F12;
 
     token = wcstok_s(NULL, L"+", &context);
   }
@@ -737,11 +813,13 @@ static void ParseAndRegisterHotkey(HWND hWnd, int id, PCWSTR hotkeyStr) {
 }
 
 static void RegisterGlobalHotkey() {
-  if (!g_hHudWnd) return;
+  if (!g_hHudWnd)
+    return;
   UnregisterGlobalHotkey();
 
   ParseAndRegisterHotkey(g_hHudWnd, HUD_HOTKEY_ID, g_Settings.toggleHotkey);
-  ParseAndRegisterHotkey(g_hHudWnd, HUD_CLICKTHRU_HOTKEY_ID, g_Settings.clickthroughHotkey);
+  ParseAndRegisterHotkey(g_hHudWnd, HUD_CLICKTHRU_HOTKEY_ID,
+                         g_Settings.clickthroughHotkey);
 }
 
 static void UnregisterGlobalHotkey() {
@@ -761,11 +839,26 @@ static void LoadModSettings() {
     Wh_FreeStringSetting(strVal);
   }
 
+  strVal = Wh_GetStringSetting(L"layout");
+  if (strVal) {
+    StringCchCopyW(g_Settings.layout, 32, strVal);
+    Wh_FreeStringSetting(strVal);
+  } else {
+    StringCchCopyW(g_Settings.layout, 32, L"horizontal");
+  }
+
+  WCHAR savedLayout[32] = {0};
+  if (Wh_GetStringValue(L"rt_layout", savedLayout, ARRAYSIZE(savedLayout))) {
+    StringCchCopyW(g_Settings.layout, 32, savedLayout);
+  }
+
   // 1. Scale
   PCWSTR scaleValStr = Wh_GetStringSetting(L"hud_scale");
   int windhawkScale = scaleValStr ? _wtoi(scaleValStr) : 100;
-  if (scaleValStr) Wh_FreeStringSetting(scaleValStr);
-  if (windhawkScale <= 0) windhawkScale = 100;
+  if (scaleValStr)
+    Wh_FreeStringSetting(scaleValStr);
+  if (windhawkScale <= 0)
+    windhawkScale = 100;
 
   int lastWindhawkScale = Wh_GetIntValue(L"rt_lastWindhawkScale", -1);
   if (lastWindhawkScale != windhawkScale) {
@@ -785,13 +878,15 @@ static void LoadModSettings() {
     Wh_DeleteValue(L"rt_clickThrough");
     g_Settings.clickThrough = whClickThrough;
   } else {
-    g_Settings.clickThrough = Wh_GetIntValue(L"rt_clickThrough", whClickThrough);
+    g_Settings.clickThrough =
+        Wh_GetIntValue(L"rt_clickThrough", whClickThrough);
   }
 
   // 3. Opacity
   PCWSTR opStr = Wh_GetStringSetting(L"card_opacity");
   int whOpacity = opStr ? _wtoi(opStr) : 88;
-  if (opStr) Wh_FreeStringSetting(opStr);
+  if (opStr)
+    Wh_FreeStringSetting(opStr);
   int lastWhOpacity = Wh_GetIntValue(L"rt_lastWhOpacity", -1);
   if (lastWhOpacity != whOpacity) {
     Wh_SetIntValue(L"rt_lastWhOpacity", whOpacity);
@@ -801,22 +896,27 @@ static void LoadModSettings() {
     int savedOpacity = Wh_GetIntValue(L"rt_opacity", -1);
     g_Settings.opacity = (savedOpacity != -1) ? savedOpacity : whOpacity;
   }
-  if (g_Settings.opacity < 0) g_Settings.opacity = 0;
-  if (g_Settings.opacity > 100) g_Settings.opacity = 100;
+  if (g_Settings.opacity < 0)
+    g_Settings.opacity = 0;
+  if (g_Settings.opacity > 100)
+    g_Settings.opacity = 100;
 
   // 4. Show Meters
   PCWSTR showMetersStr = Wh_GetStringSetting(L"show_meters");
   std::wstring whShowMeters = showMetersStr ? showMetersStr : L"both";
-  if (showMetersStr) Wh_FreeStringSetting(showMetersStr);
+  if (showMetersStr)
+    Wh_FreeStringSetting(showMetersStr);
 
   WCHAR lastWhMeters[32] = {0};
-  Wh_GetStringValue(L"rt_lastWhShowMeters", lastWhMeters, ARRAYSIZE(lastWhMeters));
+  Wh_GetStringValue(L"rt_lastWhShowMeters", lastWhMeters,
+                    ARRAYSIZE(lastWhMeters));
   if (whShowMeters != lastWhMeters) {
     Wh_SetStringValue(L"rt_lastWhShowMeters", whShowMeters.c_str());
     Wh_DeleteValue(L"rt_showMeters");
   } else {
     WCHAR savedMeters[32] = {0};
-    if (Wh_GetStringValue(L"rt_showMeters", savedMeters, ARRAYSIZE(savedMeters))) {
+    if (Wh_GetStringValue(L"rt_showMeters", savedMeters,
+                          ARRAYSIZE(savedMeters))) {
       whShowMeters = savedMeters;
     }
   }
@@ -851,13 +951,15 @@ static void LoadModSettings() {
     Wh_DeleteValue(L"rt_enablePeakHold");
     g_Settings.enablePeakHold = whPeakHold;
   } else {
-    g_Settings.enablePeakHold = Wh_GetIntValue(L"rt_enablePeakHold", whPeakHold);
+    g_Settings.enablePeakHold =
+        Wh_GetIntValue(L"rt_enablePeakHold", whPeakHold);
   }
 
   // Peak Hold Duration
   PCWSTR peakDurStr = Wh_GetStringSetting(L"peak_hold_duration");
   g_Settings.peakHoldDuration = peakDurStr ? _wtoi(peakDurStr) : 300;
-  if (peakDurStr) Wh_FreeStringSetting(peakDurStr);
+  if (peakDurStr)
+    Wh_FreeStringSetting(peakDurStr);
 
   // Hotkey, FPS, Theme
   strVal = Wh_GetStringSetting(L"toggle_hotkey");
@@ -877,7 +979,8 @@ static void LoadModSettings() {
   }
 
   g_Settings.fpsLimit = Wh_GetIntSetting(L"fps_limit");
-  if (g_Settings.fpsLimit <= 0) g_Settings.fpsLimit = 30;
+  if (g_Settings.fpsLimit <= 0)
+    g_Settings.fpsLimit = 30;
 
   strVal = Wh_GetStringSetting(L"color_theme");
   if (strVal) {
@@ -907,11 +1010,17 @@ static void PositionHudWindow() {
   GetMonitorInfoW(hMonitor, &mi);
 
   RECT workArea = mi.rcWork;
-  
+
+  BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
   float scale = g_Settings.hudScale / 100.0f;
-  if (scale < 0.25f) scale = 0.25f;
-  int w = (int)roundf(500 * scale);
-  int h = (int)roundf(104 * scale);
+  if (scale < 0.25f)
+    scale = 0.25f;
+
+  int baseW = isVertical ? 104 : 500;
+  int baseH = isVertical ? 420 : 104;
+
+  int w = (int)roundf(baseW * scale);
+  int h = (int)roundf(baseH * scale);
 
   int x = workArea.right - w - 24;
   int y = workArea.top + 24;
@@ -951,7 +1060,8 @@ static void PositionHudWindow() {
     SetWindowLongPtrW(g_hHudWnd, GWL_EXSTYLE, exStyle);
   }
   SetWindowPos(g_hHudWnd, NULL, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                   SWP_FRAMECHANGED);
 }
 
 // DirectComposition + DXGI SwapChain Hardware Accelerated Initialization
@@ -964,21 +1074,23 @@ static HRESULT InitDirectComposition(HWND hWnd) {
   // 1. Create Direct3D 11 Device
   UINT createDeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
   D3D_FEATURE_LEVEL featureLevel;
-  HRESULT hr = D3D11CreateDevice(
-      NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, createDeviceFlags,
-      NULL, 0, D3D11_SDK_VERSION, &g_pD3DDevice, &featureLevel, &g_pD3DContext);
+  HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
+                                 createDeviceFlags, NULL, 0, D3D11_SDK_VERSION,
+                                 &g_pD3DDevice, &featureLevel, &g_pD3DContext);
   if (FAILED(hr) || !g_pD3DDevice)
     return hr;
 
   // 2. Query DXGI Device
   IDXGIDevice *pDxgiDevice = nullptr;
-  hr = g_pD3DDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&pDxgiDevice);
+  hr = g_pD3DDevice->QueryInterface(__uuidof(IDXGIDevice),
+                                    (void **)&pDxgiDevice);
   if (FAILED(hr) || !pDxgiDevice)
     return hr;
 
   // 3. Create Direct2D Factory 1 & Direct2D Device
-  hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1),
-                          nullptr, (void **)&g_pD2DFactory1);
+  hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                         __uuidof(ID2D1Factory1), nullptr,
+                         (void **)&g_pD2DFactory1);
   if (FAILED(hr) || !g_pD2DFactory1) {
     pDxgiDevice->Release();
     return hr;
@@ -990,7 +1102,8 @@ static HRESULT InitDirectComposition(HWND hWnd) {
     return hr;
   }
 
-  hr = g_pD2DDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &g_pD2DContext);
+  hr = g_pD2DDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                         &g_pD2DContext);
   if (FAILED(hr) || !g_pD2DContext) {
     pDxgiDevice->Release();
     return hr;
@@ -1004,12 +1117,15 @@ static HRESULT InitDirectComposition(HWND hWnd) {
   hr = pDxgiDevice->GetAdapter(&pDxgiAdapter);
   if (SUCCEEDED(hr) && pDxgiAdapter) {
     IDXGIFactory2 *pDxgiFactory2 = nullptr;
-    hr = pDxgiAdapter->GetParent(__uuidof(IDXGIFactory2), (void **)&pDxgiFactory2);
+    hr = pDxgiAdapter->GetParent(__uuidof(IDXGIFactory2),
+                                 (void **)&pDxgiFactory2);
     if (SUCCEEDED(hr) && pDxgiFactory2) {
+      BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
       float scale = g_Settings.hudScale / 100.0f;
-      if (scale < 0.25f) scale = 0.25f;
-      int scaledWidth = (int)roundf(500 * scale);
-      int scaledHeight = (int)roundf(104 * scale);
+      if (scale < 0.25f)
+        scale = 0.25f;
+      int scaledWidth = (int)roundf((isVertical ? 104 : 500) * scale);
+      int scaledHeight = (int)roundf((isVertical ? 420 : 104) * scale);
 
       DXGI_SWAP_CHAIN_DESC1 desc = {0};
       desc.Width = scaledWidth;
@@ -1024,7 +1140,8 @@ static HRESULT InitDirectComposition(HWND hWnd) {
       desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
       desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
 
-      hr = pDxgiFactory2->CreateSwapChainForComposition(g_pD3DDevice, &desc, NULL, &g_pSwapChain);
+      hr = pDxgiFactory2->CreateSwapChainForComposition(g_pD3DDevice, &desc,
+                                                        NULL, &g_pSwapChain);
       pDxgiFactory2->Release();
     }
     pDxgiAdapter->Release();
@@ -1036,7 +1153,8 @@ static HRESULT InitDirectComposition(HWND hWnd) {
   }
 
   // 5. Create DirectComposition Device, Target & Visual
-  hr = DCompositionCreateDevice(pDxgiDevice, __uuidof(IDCompositionDevice), (void **)&g_pDCompDevice);
+  hr = DCompositionCreateDevice(pDxgiDevice, __uuidof(IDCompositionDevice),
+                                (void **)&g_pDCompDevice);
   pDxgiDevice->Release();
   if (FAILED(hr) || !g_pDCompDevice)
     return hr;
@@ -1055,17 +1173,21 @@ static HRESULT InitDirectComposition(HWND hWnd) {
 
   // 6. Bind SwapChain BackBuffer Surface to Direct2D Context
   IDXGISurface *pDxgiBackBuffer = nullptr;
-  hr = g_pSwapChain->GetBuffer(0, __uuidof(IDXGISurface), (void **)&pDxgiBackBuffer);
+  hr = g_pSwapChain->GetBuffer(0, __uuidof(IDXGISurface),
+                               (void **)&pDxgiBackBuffer);
   if (SUCCEEDED(hr) && pDxgiBackBuffer) {
     float scale = g_Settings.hudScale / 100.0f;
-    if (scale < 0.25f) scale = 0.25f;
+    if (scale < 0.25f)
+      scale = 0.25f;
 
     D2D1_BITMAP_PROPERTIES1 bitmapProperties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                          D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.0f * scale, 96.0f * scale);
 
-    hr = g_pD2DContext->CreateBitmapFromDxgiSurface(pDxgiBackBuffer, &bitmapProperties, &g_pD2DTargetBitmap);
+    hr = g_pD2DContext->CreateBitmapFromDxgiSurface(
+        pDxgiBackBuffer, &bitmapProperties, &g_pD2DTargetBitmap);
     if (SUCCEEDED(hr) && g_pD2DTargetBitmap) {
       g_pD2DContext->SetTarget(g_pD2DTargetBitmap);
       g_pD2DContext->SetDpi(96.0f * scale, 96.0f * scale);
@@ -1073,37 +1195,58 @@ static HRESULT InitDirectComposition(HWND hWnd) {
     pDxgiBackBuffer->Release();
   }
 
-  // 7. DirectWrite Fonts Initialization
+  // 7. DirectWrite Fonts Initialization with Adaptive Font Scale Compensation
   hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                            (IUnknown **)&g_pDWriteFactory);
   if (SUCCEEDED(hr) && g_pDWriteFactory) {
+    float scale = g_Settings.hudScale / 100.0f;
+    if (scale < 0.25f)
+      scale = 0.25f;
+    // Compensates font size for smaller HUD scales (e.g. 50%, 65%) so text remains crisp and readable
+    float fontComp = (scale < 1.0f) ? (1.0f / sqrtf(scale)) : 1.0f;
+
     hr = g_pDWriteFactory->CreateTextFormat(
-        L"Segoe Fluent Icons", NULL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 17.0f, L"en-us", &g_pIconFontFormat);
+        L"Segoe Fluent Icons", NULL, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * fontComp, L"en-us",
+        &g_pIconFontFormat);
     if (FAILED(hr) || !g_pIconFontFormat) {
       g_pDWriteFactory->CreateTextFormat(
-          L"Segoe MDL2 Assets", NULL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-          DWRITE_FONT_STRETCH_NORMAL, 17.0f, L"en-us", &g_pIconFontFormat);
+          L"Segoe MDL2 Assets", NULL, DWRITE_FONT_WEIGHT_NORMAL,
+          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * fontComp, L"en-us",
+          &g_pIconFontFormat);
     }
     if (g_pIconFontFormat) {
       g_pIconFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-      g_pIconFontFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pIconFontFormat->SetParagraphAlignment(
+          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
     g_pDWriteFactory->CreateTextFormat(
-        L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"en-us", &g_pLabelFontFormat);
+        L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f * fontComp, L"en-us",
+        &g_pLabelFontFormat);
     if (g_pLabelFontFormat) {
       g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-      g_pLabelFontFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pLabelFontFormat->SetParagraphAlignment(
+          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
     g_pDWriteFactory->CreateTextFormat(
         L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"en-us", &g_pValueFontFormat);
+        DWRITE_FONT_STRETCH_NORMAL, 13.0f * fontComp, L"en-us", &g_pValueFontFormat);
     if (g_pValueFontFormat) {
       g_pValueFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-      g_pValueFontFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+      g_pValueFontFormat->SetParagraphAlignment(
+          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    g_pDWriteFactory->CreateTextFormat(
+        L"Segoe UI", NULL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 10.5f * fontComp, L"en-us", &g_pValueFontFormatVert);
+    if (g_pValueFontFormatVert) {
+      g_pValueFontFormatVert->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+      g_pValueFontFormatVert->SetParagraphAlignment(
+          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
   }
 
@@ -1122,6 +1265,10 @@ static void CleanupDirectComposition() {
   if (g_pValueFontFormat) {
     g_pValueFontFormat->Release();
     g_pValueFontFormat = nullptr;
+  }
+  if (g_pValueFontFormatVert) {
+    g_pValueFontFormatVert->Release();
+    g_pValueFontFormatVert = nullptr;
   }
   if (g_pDWriteFactory) {
     g_pDWriteFactory->Release();
@@ -1178,10 +1325,12 @@ static void RenderHud() {
   }
 
   g_pD2DContext->BeginDraw();
-  g_pD2DContext->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent premultiplied canvas
+  g_pD2DContext->Clear(
+      D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent premultiplied canvas
 
   D2D1_SIZE_F size = g_pD2DContext->GetSize();
-  float cornerRadius = 16.0f; // Flush with Windows 11 DWM native corner rounding (DWMWCP_ROUND = 16px)
+  BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
+  float cornerRadius = 16.0f; // Flush with Windows 11 DWM native corner
 
   D2D1_ROUNDED_RECT cardRect = D2D1::RoundedRect(
       D2D1::RectF(0.5f, 0.5f, size.width - 0.5f, size.height - 0.5f),
@@ -1189,12 +1338,14 @@ static void RenderHud() {
 
   float masterOp = g_Settings.opacity / 100.0f;
 
-  // 1. Fluent Dark Card Background (alpha maps directly to masterOp for true 100% opacity)
+  // 1. Fluent Dark Card Background
   ID2D1GradientStopCollection *pBaseStops = nullptr;
   D2D1_GRADIENT_STOP baseStops[2];
-  baseStops[0].color = D2D1::ColorF(0.10f, 0.12f, 0.16f, masterOp); // Dark Fluent slate top
+  baseStops[0].color =
+      D2D1::ColorF(0.10f, 0.12f, 0.16f, masterOp); // Dark Fluent slate top
   baseStops[0].position = 0.0f;
-  baseStops[1].color = D2D1::ColorF(0.06f, 0.07f, 0.10f, masterOp); // Darker Fluent slate bottom
+  baseStops[1].color =
+      D2D1::ColorF(0.06f, 0.07f, 0.10f, masterOp); // Darker Fluent slate bottom
   baseStops[1].position = 1.0f;
   g_pD2DContext->CreateGradientStopCollection(
       baseStops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pBaseStops);
@@ -1203,8 +1354,7 @@ static void RenderHud() {
   if (pBaseStops) {
     g_pD2DContext->CreateLinearGradientBrush(
         D2D1::LinearGradientBrushProperties(
-            D2D1::Point2F(0.0f, 0.0f),
-            D2D1::Point2F(size.width, size.height)),
+            D2D1::Point2F(0.0f, 0.0f), D2D1::Point2F(size.width, size.height)),
         pBaseStops, &pBaseBgBrush);
     pBaseStops->Release();
   }
@@ -1216,7 +1366,8 @@ static void RenderHud() {
   // 2. Top Specular Glass Gloss Sheen Reflection
   ID2D1GradientStopCollection *pSheenStops = nullptr;
   D2D1_GRADIENT_STOP sheenStops[2];
-  sheenStops[0].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f * masterOp); // Softened to avoid white band artifact
+  sheenStops[0].color =
+      D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f * masterOp);
   sheenStops[0].position = 0.0f;
   sheenStops[1].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f);
   sheenStops[1].position = 1.0f;
@@ -1228,26 +1379,26 @@ static void RenderHud() {
     g_pD2DContext->CreateLinearGradientBrush(
         D2D1::LinearGradientBrushProperties(
             D2D1::Point2F(0.0f, 0.0f),
-            D2D1::Point2F(0.0f, size.height * 0.45f)),
+            D2D1::Point2F(0.0f, size.height * (isVertical ? 0.25f : 0.45f))),
         pSheenStops, &pSheenBrush);
     pSheenStops->Release();
   }
   if (pSheenBrush) {
     D2D1_ROUNDED_RECT sheenRect = D2D1::RoundedRect(
-        D2D1::RectF(1.0f, 1.0f, size.width - 1.0f, size.height * 0.45f),
+        D2D1::RectF(1.0f, 1.0f, size.width - 1.0f, size.height * (isVertical ? 0.25f : 0.45f)),
         16.0f, 16.0f);
     g_pD2DContext->FillRoundedRectangle(sheenRect, pSheenBrush);
     pSheenBrush->Release();
   }
 
-  // 3. Specular Rim Lighting (N dot L Glass Edge Simulation)
+  // 3. Specular Rim Lighting
   ID2D1GradientStopCollection *pRimStops = nullptr;
   D2D1_GRADIENT_STOP rimStops[3];
-  rimStops[0].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * masterOp); // Soft top-left specular highlight
+  rimStops[0].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * masterOp);
   rimStops[0].position = 0.0f;
-  rimStops[1].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * masterOp); // Translucent edge
+  rimStops[1].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * masterOp);
   rimStops[1].position = 0.45f;
-  rimStops[2].color = D2D1::ColorF(0.02f, 0.05f, 0.10f, 0.18f * masterOp); // Subtle bottom-right shadow
+  rimStops[2].color = D2D1::ColorF(0.02f, 0.05f, 0.10f, 0.18f * masterOp);
   rimStops[2].position = 1.0f;
   g_pD2DContext->CreateGradientStopCollection(
       rimStops, 3, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pRimStops);
@@ -1256,8 +1407,7 @@ static void RenderHud() {
   if (pRimStops) {
     g_pD2DContext->CreateLinearGradientBrush(
         D2D1::LinearGradientBrushProperties(
-            D2D1::Point2F(0.0f, 0.0f),
-            D2D1::Point2F(size.width, size.height)),
+            D2D1::Point2F(0.0f, 0.0f), D2D1::Point2F(size.width, size.height)),
         pRimStops, &pRimBrush);
     pRimStops->Release();
   }
@@ -1266,44 +1416,54 @@ static void RenderHud() {
     pRimBrush->Release();
   }
 
-  // 4. (Top Rim Highlight Line removed — caused harsh white bar artifact at top edge)
-
-  int activeRows =
+  int activeChannels =
       (g_Settings.showMic ? 1 : 0) + (g_Settings.showSystem ? 1 : 0);
-  if (activeRows == 0)
-    activeRows = 1;
+  if (activeChannels == 0)
+    activeChannels = 1;
 
-  // 5. Horizontal Divider Line with dual pass (shadow + highlight)
+  // Divider Line
   if (g_Settings.showMic && g_Settings.showSystem) {
     ID2D1SolidColorBrush *pDividerShadowBrush = nullptr;
     ID2D1SolidColorBrush *pDividerLightBrush = nullptr;
-    g_pD2DContext->CreateSolidColorBrush(
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f), &pDividerShadowBrush);
-    g_pD2DContext->CreateSolidColorBrush(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f), &pDividerLightBrush);
+    g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f),
+                                         &pDividerShadowBrush);
+    g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
+                                         &pDividerLightBrush);
 
-    float midY = size.height / 2.0f;
-    if (pDividerShadowBrush) {
-      g_pD2DContext->DrawLine(
-          D2D1::Point2F(16.0f, midY + 0.5f),
-          D2D1::Point2F(size.width - 40.0f, midY + 0.5f),
-          pDividerShadowBrush, 1.0f);
-      pDividerShadowBrush->Release();
-    }
-    if (pDividerLightBrush) {
-      g_pD2DContext->DrawLine(
-          D2D1::Point2F(16.0f, midY - 0.5f),
-          D2D1::Point2F(size.width - 40.0f, midY - 0.5f),
-          pDividerLightBrush, 1.0f);
-      pDividerLightBrush->Release();
+    if (isVertical) {
+      float midX = size.width / 2.0f;
+      if (pDividerShadowBrush) {
+        g_pD2DContext->DrawLine(D2D1::Point2F(midX + 0.5f, 36.0f),
+                                D2D1::Point2F(midX + 0.5f, size.height - 36.0f),
+                                pDividerShadowBrush, 1.0f);
+        pDividerShadowBrush->Release();
+      }
+      if (pDividerLightBrush) {
+        g_pD2DContext->DrawLine(D2D1::Point2F(midX - 0.5f, 36.0f),
+                                D2D1::Point2F(midX - 0.5f, size.height - 36.0f),
+                                pDividerLightBrush, 1.0f);
+        pDividerLightBrush->Release();
+      }
+    } else {
+      float midY = size.height / 2.0f;
+      if (pDividerShadowBrush) {
+        g_pD2DContext->DrawLine(D2D1::Point2F(16.0f, midY + 0.5f),
+                                D2D1::Point2F(size.width - 40.0f, midY + 0.5f),
+                                pDividerShadowBrush, 1.0f);
+        pDividerShadowBrush->Release();
+      }
+      if (pDividerLightBrush) {
+        g_pD2DContext->DrawLine(D2D1::Point2F(16.0f, midY - 0.5f),
+                                D2D1::Point2F(size.width - 40.0f, midY - 0.5f),
+                                pDividerLightBrush, 1.0f);
+        pDividerLightBrush->Release();
+      }
     }
   }
 
-
-
   // Color Palette Definitions
-  D2D1_COLOR_F greenColor = D2D1::ColorF(0.13f, 0.77f, 0.37f, 1.0f); // Fluent Green #22C55E
-  D2D1_COLOR_F yellowColor = D2D1::ColorF(0.95f, 0.72f, 0.05f, 1.0f); // Fluent Yellow #F5B80D
+  D2D1_COLOR_F greenColor = D2D1::ColorF(0.13f, 0.77f, 0.37f, 1.0f); // Fluent Green
+  D2D1_COLOR_F yellowColor = D2D1::ColorF(0.95f, 0.72f, 0.05f, 1.0f); // Fluent Yellow
 
   if (_wcsicmp(g_Settings.colorTheme, L"neon") == 0) {
     greenColor = D2D1::ColorF(0.00f, 0.90f, 1.00f);
@@ -1324,187 +1484,320 @@ static void RenderHud() {
   ID2D1SolidColorBrush *pMuteBrush = nullptr;
   ID2D1SolidColorBrush *pPeakHoldBrush = nullptr;
 
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &pTextBrush);
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(1.0f, 0.88f, 0.25f, 0.95f), &pPeakHoldBrush);
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &pTextBrush);
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.88f, 0.25f, 0.95f), &pPeakHoldBrush);
   g_pD2DContext->CreateSolidColorBrush(greenColor, &pGreenBrush);
   g_pD2DContext->CreateSolidColorBrush(yellowColor, &pYellowBrush);
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f), &pUnlitBrush);
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(0.95f, 0.20f, 0.20f, 1.0f), &pClipBrush);
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(0.40f, 0.40f, 0.45f, 0.4f), &pMuteBrush);
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f), &pUnlitBrush);
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.20f, 0.20f, 1.0f), &pClipBrush);
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(0.40f, 0.40f, 0.45f, 0.4f), &pMuteBrush);
 
-  // Gradient stops for 3D liquid pill top gloss
   ID2D1GradientStopCollection *pPillGlossStops = nullptr;
   D2D1_GRADIENT_STOP pillGlossStops[2];
   pillGlossStops[0].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
   pillGlossStops[0].position = 0.0f;
   pillGlossStops[1].color = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f);
   pillGlossStops[1].position = 1.0f;
-  g_pD2DContext->CreateGradientStopCollection(
-      pillGlossStops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pPillGlossStops);
+  g_pD2DContext->CreateGradientStopCollection(pillGlossStops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pPillGlossStops);
 
   ID2D1SolidColorBrush *pPillCapBrush = nullptr;
-  g_pD2DContext->CreateSolidColorBrush(
-      D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f), &pPillCapBrush);
-
-  float rowHeight = size.height / (float)activeRows;
-  float currentY = 0.0f;
+  g_pD2DContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f), &pPillCapBrush);
 
   const int TOTAL_SEGMENTS = 25;
-  const float BAR_LEFT = g_Settings.showLabels ? 100.0f : 48.0f;
-  const float BAR_RIGHT = std::max(BAR_LEFT + 120.0f, size.width - 85.0f);
-  const float BAR_TOTAL_WIDTH = BAR_RIGHT - BAR_LEFT;
   const float SEG_GAP = 2.5f;
-  const float SEG_WIDTH = (BAR_TOTAL_WIDTH - (TOTAL_SEGMENTS - 1) * SEG_GAP) / (float)TOTAL_SEGMENTS;
   const float SEG_CORNER = 2.5f;
 
-  auto DrawRow = [&](AudioEndpointTracker &tracker, PCWSTR iconChar, PCWSTR labelText) {
-    float rowCenterY = currentY + rowHeight / 2.0f;
+  float scale = g_Settings.hudScale / 100.0f;
+  if (scale < 0.25f) scale = 0.25f;
+  float fontComp = (scale < 1.0f) ? (1.0f / sqrtf(scale)) : 1.0f;
 
-    // A. Left-aligned Icon
-    if (g_pIconFontFormat && pTextBrush) {
-      D2D1_RECT_F iconRect = D2D1::RectF(16.0f, currentY, 40.0f, currentY + rowHeight);
-      g_pD2DContext->DrawTextW(iconChar, 1, g_pIconFontFormat, iconRect, pTextBrush);
-    }
+  if (isVertical) {
+    // ── Vertical Orientation Renderer ─────────────────────────────────────
+    int colIndex = 0;
+    float colWidth = size.width / (float)activeChannels;
 
-    // B. Left-aligned Label ("Mic" / "System") - optional display
-    if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
-      D2D1_RECT_F labelRect = D2D1::RectF(42.0f, currentY, 96.0f, currentY + rowHeight);
-      g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
-    }
+    auto DrawVerticalChannel = [&](AudioEndpointTracker &tracker, PCWSTR iconChar, PCWSTR labelText) {
+      float colCenterX = (colIndex + 0.5f) * colWidth;
 
-    // C. Segmented Audio Level Meter (25 pills)
-    float segHeight = 18.0f;
-    float segTop = rowCenterY - segHeight / 2.0f;
-    float segBottom = rowCenterY + segHeight / 2.0f;
-
-    int litCount = 0;
-    if (!tracker.isMuted && tracker.currentLevel > 0.0001f) {
-      float ratio = LinearToMeterRatio(tracker.currentLevel);
-      litCount = (int)roundf(ratio * TOTAL_SEGMENTS);
-      if (litCount < 1 && tracker.currentLevel > 0.001f) litCount = 1;
-      if (litCount > TOTAL_SEGMENTS) litCount = TOTAL_SEGMENTS;
-    }
-
-    int peakIndex = -1;
-    if (g_Settings.enablePeakHold && !tracker.isMuted && tracker.peakHold > 0.0001f) {
-      float peakRatio = LinearToMeterRatio(tracker.peakHold);
-      peakIndex = (int)roundf(peakRatio * TOTAL_SEGMENTS) - 1;
-      if (peakIndex < 0 && tracker.peakHold > 0.001f) peakIndex = 0;
-      if (peakIndex >= TOTAL_SEGMENTS) peakIndex = TOTAL_SEGMENTS - 1;
-    }
-
-
-    for (int i = 0; i < TOTAL_SEGMENTS; i++) {
-      float segX = BAR_LEFT + i * (SEG_WIDTH + SEG_GAP);
-      D2D1_ROUNDED_RECT segRect = D2D1::RoundedRect(
-          D2D1::RectF(segX, segTop, segX + SEG_WIDTH, segBottom),
-          SEG_CORNER, SEG_CORNER);
-
-      ID2D1SolidColorBrush *pBrush = pUnlitBrush;
-      if (tracker.isMuted) {
-        pBrush = pMuteBrush;
-      } else if (i < litCount) {
-        if (tracker.isClipping) {
-          pBrush = pClipBrush;
-        } else if (i >= 17) {
-          pBrush = pYellowBrush;
-        } else {
-          pBrush = pGreenBrush;
-        }
-      } else if (i == peakIndex && pPeakHoldBrush) {
-        pBrush = pPeakHoldBrush;
+      // Icon at Top
+      if (g_pIconFontFormat && pTextBrush) {
+        D2D1_RECT_F iconRect = D2D1::RectF(colCenterX - 18.0f, 12.0f, colCenterX + 18.0f, 34.0f);
+        g_pD2DContext->DrawTextW(iconChar, 1, g_pIconFontFormat, iconRect, pTextBrush);
       }
 
-      if (pBrush) {
-        g_pD2DContext->FillRoundedRectangle(segRect, pBrush);
+      // Channel Label ("Mic" / "System") right below icon
+      float labelBottom = 34.0f;
+      if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
+        labelBottom = 52.0f;
+        D2D1_RECT_F labelRect = D2D1::RectF(colCenterX - 35.0f, 32.0f, colCenterX + 35.0f, 50.0f);
+        g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
+        g_pLabelFontFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+      }
 
-        // 3D Liquid Glass Pill Gloss Overlay on active segments
-        if (pBrush != pUnlitBrush && pBrush != pMuteBrush && pPillGlossStops) {
-          ID2D1LinearGradientBrush *pPillGlossBrush = nullptr;
-          g_pD2DContext->CreateLinearGradientBrush(
-              D2D1::LinearGradientBrushProperties(
-                  D2D1::Point2F(0.0f, segTop),
-                  D2D1::Point2F(0.0f, segTop + 9.0f)),
-              pPillGlossStops, &pPillGlossBrush);
+      // Vertical Level Meter Bar (25 pills stacked bottom-to-top)
+      float barTop = labelBottom + 8.0f;
+      float barBottom = size.height - 40.0f;
+      float barTotalHeight = barBottom - barTop;
+      float segHeight = (barTotalHeight - (TOTAL_SEGMENTS - 1) * SEG_GAP) / (float)TOTAL_SEGMENTS;
+      float segWidth = 18.0f;
 
-          if (pPillGlossBrush) {
-            D2D1_ROUNDED_RECT topGlossRect = D2D1::RoundedRect(
-                D2D1::RectF(segX, segTop, segX + SEG_WIDTH, segTop + 9.0f),
-                SEG_CORNER, SEG_CORNER);
-            g_pD2DContext->FillRoundedRectangle(topGlossRect, pPillGlossBrush);
-            pPillGlossBrush->Release();
+      int litCount = 0;
+      if (!tracker.isMuted && tracker.currentLevel > 0.0001f) {
+        float ratio = LinearToMeterRatio(tracker.currentLevel);
+        litCount = (int)roundf(ratio * TOTAL_SEGMENTS);
+        if (litCount < 1 && tracker.currentLevel > 0.001f) litCount = 1;
+        if (litCount > TOTAL_SEGMENTS) litCount = TOTAL_SEGMENTS;
+      }
+
+      int peakIndex = -1;
+      if (g_Settings.enablePeakHold && !tracker.isMuted && tracker.peakHold > 0.0001f) {
+        float peakRatio = LinearToMeterRatio(tracker.peakHold);
+        peakIndex = (int)roundf(peakRatio * TOTAL_SEGMENTS) - 1;
+        if (peakIndex < 0 && tracker.peakHold > 0.001f) peakIndex = 0;
+        if (peakIndex >= TOTAL_SEGMENTS) peakIndex = TOTAL_SEGMENTS - 1;
+      }
+
+      for (int i = 0; i < TOTAL_SEGMENTS; i++) {
+        // Stack bottom-to-top (i = 0 at bottom)
+        float segY = barBottom - (i + 1) * segHeight - i * SEG_GAP;
+        float segX = colCenterX - segWidth / 2.0f;
+        D2D1_ROUNDED_RECT segRect = D2D1::RoundedRect(
+            D2D1::RectF(segX, segY, segX + segWidth, segY + segHeight),
+            SEG_CORNER, SEG_CORNER);
+
+        ID2D1SolidColorBrush *pBrush = pUnlitBrush;
+        if (tracker.isMuted) {
+          pBrush = pMuteBrush;
+        } else if (i < litCount) {
+          if (tracker.isClipping) {
+            pBrush = pClipBrush;
+          } else if (i >= 17) {
+            pBrush = pYellowBrush;
+          } else {
+            pBrush = pGreenBrush;
           }
+        } else if (i == peakIndex && pPeakHoldBrush) {
+          pBrush = pPeakHoldBrush;
+        }
 
-          if (pPillCapBrush) {
-            g_pD2DContext->DrawLine(
-                D2D1::Point2F(segX + 0.8f, segTop + 0.5f),
-                D2D1::Point2F(segX + SEG_WIDTH - 0.8f, segTop + 0.5f),
-                pPillCapBrush, 1.0f);
+        if (pBrush) {
+          g_pD2DContext->FillRoundedRectangle(segRect, pBrush);
+
+          // 3D Liquid Gloss Overlay on top half of active vertical segment
+          if (pBrush != pUnlitBrush && pBrush != pMuteBrush && pPillGlossStops) {
+            ID2D1LinearGradientBrush *pPillGlossBrush = nullptr;
+            g_pD2DContext->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(0.0f, segY), D2D1::Point2F(0.0f, segY + segHeight * 0.5f)),
+                pPillGlossStops, &pPillGlossBrush);
+
+            if (pPillGlossBrush) {
+              D2D1_ROUNDED_RECT topGlossRect = D2D1::RoundedRect(
+                  D2D1::RectF(segX, segY, segX + segWidth, segY + segHeight * 0.5f),
+                  SEG_CORNER, SEG_CORNER);
+              g_pD2DContext->FillRoundedRectangle(topGlossRect, pPillGlossBrush);
+              pPillGlossBrush->Release();
+            }
+
+            if (pPillCapBrush) {
+              g_pD2DContext->DrawLine(
+                  D2D1::Point2F(segX + 0.8f, segY + 0.5f),
+                  D2D1::Point2F(segX + segWidth - 0.8f, segY + 0.5f),
+                  pPillCapBrush, 1.0f);
+            }
           }
         }
       }
-    }
 
-    // D. Right-aligned Live dB numerical value & CLIP warning color
-    if (g_pValueFontFormat && pTextBrush) {
-      WCHAR dbText[32];
-      ID2D1SolidColorBrush *pCurTextBrush = pTextBrush;
+      // Live dB text readout at bottom
+      if ((g_pValueFontFormatVert || g_pValueFontFormat) && pTextBrush) {
+        WCHAR dbText[32];
+        ID2D1SolidColorBrush *pCurTextBrush = pTextBrush;
+        IDWriteTextFormat *pValFmt = g_pValueFontFormatVert ? g_pValueFontFormatVert : g_pValueFontFormat;
 
-      if (tracker.isMuted) {
-        StringCchCopyW(dbText, 32, L"Muted");
-      } else {
-        if (tracker.isClipping) {
-          pCurTextBrush = pClipBrush; // Highlight text in red during clipping latch
-        }
-        
-        if (tracker.currentLevel <= 0.0001f) {
-          StringCchCopyW(dbText, 32, L"-60 dB");
+        if (tracker.isMuted) {
+          StringCchCopyW(dbText, 32, L"Muted");
         } else {
-          float dB = 20.0f * log10f(tracker.currentLevel);
-          if (dB < -60.0f) dB = -60.0f;
-          if (dB > 0.0f) dB = 0.0f;
-          swprintf_s(dbText, L"%d dB", (int)roundf(dB));
+          if (tracker.isClipping) {
+            pCurTextBrush = pClipBrush;
+          }
+          if (tracker.currentLevel <= 0.0001f) {
+            StringCchCopyW(dbText, 32, L"-60dB");
+          } else {
+            float dB = 20.0f * log10f(tracker.currentLevel);
+            if (dB < -60.0f) dB = -60.0f;
+            if (dB > 0.0f) dB = 0.0f;
+            swprintf_s(dbText, L"%ddB", (int)roundf(dB));
+          }
+        }
+
+        D2D1_RECT_F valueRect = D2D1::RectF(colCenterX - 24.0f, size.height - 30.0f, colCenterX + 24.0f, size.height - 4.0f);
+        g_pD2DContext->DrawTextW(dbText, (UINT32)wcslen(dbText), pValFmt, valueRect, pCurTextBrush);
+      }
+
+      colIndex++;
+    };
+
+    if (g_Settings.showMic) {
+      WCHAR micIconStr[2] = {L'\uE720', L'\0'};
+      DrawVerticalChannel(g_MicTracker, micIconStr, L"Mic");
+    }
+    if (g_Settings.showSystem) {
+      WCHAR sysIconStr[2] = {L'\uE767', L'\0'};
+      DrawVerticalChannel(g_SystemTracker, sysIconStr, L"System");
+    }
+  } else {
+    // ── Horizontal Orientation Renderer ───────────────────────────────────
+    float rowHeight = size.height / (float)activeChannels;
+    float currentY = 0.0f;
+
+    const float BAR_LEFT = g_Settings.showLabels ? (96.0f * (0.85f + 0.15f * fontComp)) : 48.0f;
+    const float BAR_RIGHT = std::max(BAR_LEFT + 100.0f, size.width - (56.0f * fontComp));
+    const float BAR_TOTAL_WIDTH = BAR_RIGHT - BAR_LEFT;
+    const float SEG_WIDTH = (BAR_TOTAL_WIDTH - (TOTAL_SEGMENTS - 1) * SEG_GAP) / (float)TOTAL_SEGMENTS;
+
+    auto DrawRow = [&](AudioEndpointTracker &tracker, PCWSTR iconChar, PCWSTR labelText) {
+      float rowCenterY = currentY + rowHeight / 2.0f;
+
+      // Icon
+      if (g_pIconFontFormat && pTextBrush) {
+        D2D1_RECT_F iconRect = D2D1::RectF(16.0f, currentY, 40.0f, currentY + rowHeight);
+        g_pD2DContext->DrawTextW(iconChar, 1, g_pIconFontFormat, iconRect, pTextBrush);
+      }
+
+      // Label
+      if (g_Settings.showLabels && g_pLabelFontFormat && pTextBrush) {
+        D2D1_RECT_F labelRect = D2D1::RectF(42.0f, currentY, BAR_LEFT - 6.0f, currentY + rowHeight);
+        g_pD2DContext->DrawTextW(labelText, (UINT32)wcslen(labelText), g_pLabelFontFormat, labelRect, pTextBrush);
+      }
+
+      // Horizontal segmented level bar
+      float segHeight = 18.0f;
+      float segTop = rowCenterY - segHeight / 2.0f;
+      float segBottom = rowCenterY + segHeight / 2.0f;
+
+      int litCount = 0;
+      if (!tracker.isMuted && tracker.currentLevel > 0.0001f) {
+        float ratio = LinearToMeterRatio(tracker.currentLevel);
+        litCount = (int)roundf(ratio * TOTAL_SEGMENTS);
+        if (litCount < 1 && tracker.currentLevel > 0.001f) litCount = 1;
+        if (litCount > TOTAL_SEGMENTS) litCount = TOTAL_SEGMENTS;
+      }
+
+      int peakIndex = -1;
+      if (g_Settings.enablePeakHold && !tracker.isMuted && tracker.peakHold > 0.0001f) {
+        float peakRatio = LinearToMeterRatio(tracker.peakHold);
+        peakIndex = (int)roundf(peakRatio * TOTAL_SEGMENTS) - 1;
+        if (peakIndex < 0 && tracker.peakHold > 0.001f) peakIndex = 0;
+        if (peakIndex >= TOTAL_SEGMENTS) peakIndex = TOTAL_SEGMENTS - 1;
+      }
+
+      for (int i = 0; i < TOTAL_SEGMENTS; i++) {
+        float segX = BAR_LEFT + i * (SEG_WIDTH + SEG_GAP);
+        D2D1_ROUNDED_RECT segRect = D2D1::RoundedRect(
+            D2D1::RectF(segX, segTop, segX + SEG_WIDTH, segBottom), SEG_CORNER, SEG_CORNER);
+
+        ID2D1SolidColorBrush *pBrush = pUnlitBrush;
+        if (tracker.isMuted) {
+          pBrush = pMuteBrush;
+        } else if (i < litCount) {
+          if (tracker.isClipping) {
+            pBrush = pClipBrush;
+          } else if (i >= 17) {
+            pBrush = pYellowBrush;
+          } else {
+            pBrush = pGreenBrush;
+          }
+        } else if (i == peakIndex && pPeakHoldBrush) {
+          pBrush = pPeakHoldBrush;
+        }
+
+        if (pBrush) {
+          g_pD2DContext->FillRoundedRectangle(segRect, pBrush);
+
+          if (pBrush != pUnlitBrush && pBrush != pMuteBrush && pPillGlossStops) {
+            ID2D1LinearGradientBrush *pPillGlossBrush = nullptr;
+            g_pD2DContext->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(0.0f, segTop), D2D1::Point2F(0.0f, segTop + 9.0f)),
+                pPillGlossStops, &pPillGlossBrush);
+
+            if (pPillGlossBrush) {
+              D2D1_ROUNDED_RECT topGlossRect = D2D1::RoundedRect(
+                  D2D1::RectF(segX, segTop, segX + SEG_WIDTH, segTop + 9.0f),
+                  SEG_CORNER, SEG_CORNER);
+              g_pD2DContext->FillRoundedRectangle(topGlossRect, pPillGlossBrush);
+              pPillGlossBrush->Release();
+            }
+
+            if (pPillCapBrush) {
+              g_pD2DContext->DrawLine(
+                  D2D1::Point2F(segX + 0.8f, segTop + 0.5f),
+                  D2D1::Point2F(segX + SEG_WIDTH - 0.8f, segTop + 0.5f),
+                  pPillCapBrush, 1.0f);
+            }
+          }
         }
       }
 
-      D2D1_RECT_F valueRect = D2D1::RectF(BAR_RIGHT + 4.0f, currentY, size.width - 30.0f, currentY + rowHeight);
-      g_pD2DContext->DrawTextW(dbText, (UINT32)wcslen(dbText), g_pValueFontFormat, valueRect, pCurTextBrush);
+      // Live dB text readout
+      if (g_pValueFontFormat && pTextBrush) {
+        WCHAR dbText[32];
+        ID2D1SolidColorBrush *pCurTextBrush = pTextBrush;
+
+        if (tracker.isMuted) {
+          StringCchCopyW(dbText, 32, L"Muted");
+        } else {
+          if (tracker.isClipping) {
+            pCurTextBrush = pClipBrush;
+          }
+          if (tracker.currentLevel <= 0.0001f) {
+            StringCchCopyW(dbText, 32, L"-60 dB");
+          } else {
+            float dB = 20.0f * log10f(tracker.currentLevel);
+            if (dB < -60.0f) dB = -60.0f;
+            if (dB > 0.0f) dB = 0.0f;
+            swprintf_s(dbText, L"%d dB", (int)roundf(dB));
+          }
+        }
+
+        D2D1_RECT_F valueRect = D2D1::RectF(
+            BAR_RIGHT + 4.0f, currentY, size.width - 24.0f, currentY + rowHeight);
+        g_pD2DContext->DrawTextW(dbText, (UINT32)wcslen(dbText),
+                                 g_pValueFontFormat, valueRect, pCurTextBrush);
+      }
+
+      currentY += rowHeight;
+    };
+
+    if (g_Settings.showMic) {
+      WCHAR micIconStr[2] = {L'\uE720', L'\0'};
+      DrawRow(g_MicTracker, micIconStr, L"Mic");
     }
-
-    currentY += rowHeight;
-  };
-
-  // Render Microphone Row
-  if (g_Settings.showMic) {
-    WCHAR micIconStr[2] = { L'\uE720', L'\0' };
-    DrawRow(g_MicTracker, micIconStr, L"Mic");
-  }
-
-  // Render System Audio Row
-  if (g_Settings.showSystem) {
-    WCHAR sysIconStr[2] = { L'\uE767', L'\0' };
-    DrawRow(g_SystemTracker, sysIconStr, L"System");
+    if (g_Settings.showSystem) {
+      WCHAR sysIconStr[2] = {L'\uE767', L'\0'};
+      DrawRow(g_SystemTracker, sysIconStr, L"System");
+    }
   }
 
   // Draw Settings overflow button (⋮) if clickable
   if (!g_Settings.clickThrough && g_pIconFontFormat && pTextBrush) {
-    WCHAR moreIconStr[2] = { L'\uE712', L'\0' };
-    
-    // Rotate the text 90 degrees around its center to make the horizontal "..." vertical
-    D2D1_POINT_2F center = D2D1::Point2F(size.width - 16.0f, size.height / 2.0f);
-    g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f, center));
+    WCHAR moreIconStr[2] = {L'\uE712', L'\0'};
 
-    // Center it vertically on the right edge
-    D2D1_RECT_F moreRect = D2D1::RectF(size.width - 32.0f, 0.0f, size.width, size.height);
-    g_pD2DContext->DrawTextW(moreIconStr, 1, g_pIconFontFormat, moreRect, pTextBrush);
-
-    // Reset transform
-    g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (isVertical) {
+      D2D1_POINT_2F dotCenter = D2D1::Point2F(size.width / 2.0f, 23.0f);
+      g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f, dotCenter));
+      D2D1_RECT_F dotsRect = D2D1::RectF(dotCenter.x - 14.0f, dotCenter.y - 14.0f, dotCenter.x + 14.0f, dotCenter.y + 14.0f);
+      g_pD2DContext->DrawTextW(moreIconStr, 1, g_pIconFontFormat, dotsRect, pTextBrush);
+      g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    } else {
+      D2D1_POINT_2F center = D2D1::Point2F(size.width - 16.0f, size.height / 2.0f);
+      g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f, center));
+      D2D1_RECT_F moreRect = D2D1::RectF(size.width - 32.0f, 0.0f, size.width, size.height);
+      g_pD2DContext->DrawTextW(moreIconStr, 1, g_pIconFontFormat, moreRect, pTextBrush);
+      g_pD2DContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    }
   }
 
   if (pPeakHoldBrush) pPeakHoldBrush->Release();
@@ -1535,38 +1828,53 @@ static void DismissFlyout() {
   }
 }
 
-static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam,
+                                      LPARAM lParam) {
   switch (message) {
   case WM_PAINT: {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hWnd, &ps);
     RECT rc;
     GetClientRect(hWnd, &rc);
-    // Dark glass background fill
-    if (!g_hFlyoutBgBrush) g_hFlyoutBgBrush = CreateSolidBrush(RGB(20, 20, 32));
+    if (!g_hFlyoutBgBrush)
+      g_hFlyoutBgBrush = CreateSolidBrush(RGB(20, 20, 32));
     FillRect(hdc, &rc, g_hFlyoutBgBrush);
-    // Section header text: "Opacity"
+
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(210, 215, 230));
-    HFONT hFont = CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT hFont =
+        CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     HFONT hOld = (HFONT)SelectObject(hdc, hFont);
+
     RECT lblRc = {14, 14, 120, 34};
     DrawTextW(hdc, L"Opacity", -1, &lblRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
     RECT scaleRc = {14, 60, 120, 80};
     DrawTextW(hdc, L"HUD Scale", -1, &scaleRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT secRc = {14, 110, 200, 128};
+
+    RECT orientRc = {14, 106, 200, 124};
+    DrawTextW(hdc, L"Orientation", -1, &orientRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    RECT secRc = {14, 186, 200, 204};
     DrawTextW(hdc, L"Display", -1, &secRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT sec2Rc = {14, 242, 200, 260};
+
+    RECT sec2Rc = {14, 318, 200, 336};
     DrawTextW(hdc, L"Input Device", -1, &sec2Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT sec3Rc = {14, 304, 200, 322};
+
+    RECT sec3Rc = {14, 380, 200, 398};
     DrawTextW(hdc, L"Behavior", -1, &sec3Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
     // Subtle section separator lines
     HPEN hPen = CreatePen(PS_SOLID, 1, RGB(55, 55, 75));
     HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
     MoveToEx(hdc, 14, 54, NULL); LineTo(hdc, rc.right - 14, 54);
-    MoveToEx(hdc, 14, 104, NULL); LineTo(hdc, rc.right - 14, 104);
-    MoveToEx(hdc, 14, 236, NULL); LineTo(hdc, rc.right - 14, 236);
-    MoveToEx(hdc, 14, 298, NULL); LineTo(hdc, rc.right - 14, 298);
+    MoveToEx(hdc, 14, 100, NULL); LineTo(hdc, rc.right - 14, 100);
+    MoveToEx(hdc, 14, 180, NULL); LineTo(hdc, rc.right - 14, 180);
+    MoveToEx(hdc, 14, 312, NULL); LineTo(hdc, rc.right - 14, 312);
+    MoveToEx(hdc, 14, 374, NULL); LineTo(hdc, rc.right - 14, 374);
+
     SelectObject(hdc, hOldPen);
     DeleteObject(hPen);
     SelectObject(hdc, hOld);
@@ -1575,7 +1883,6 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
     return 0;
   }
 
-  // Make all child controls transparent with bright white text over the dark background
   case WM_CTLCOLORSTATIC:
   case WM_CTLCOLORBTN:
   case WM_CTLCOLORLISTBOX:
@@ -1583,7 +1890,8 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
     HDC hdcCtrl = (HDC)wParam;
     SetBkMode(hdcCtrl, TRANSPARENT);
     SetTextColor(hdcCtrl, RGB(245, 245, 255));
-    if (!g_hFlyoutBgBrush) g_hFlyoutBgBrush = CreateSolidBrush(RGB(20, 20, 32));
+    if (!g_hFlyoutBgBrush)
+      g_hFlyoutBgBrush = CreateSolidBrush(RGB(20, 20, 32));
     return (LRESULT)g_hFlyoutBgBrush;
   }
 
@@ -1593,12 +1901,10 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       HDC hdc = pDIS->hDC;
       RECT rc = pDIS->rcItem;
 
-      // Dark slate background fill matching flyout background
       HBRUSH hBg = CreateSolidBrush(RGB(20, 20, 32));
       FillRect(hdc, &rc, hBg);
       DeleteObject(hBg);
 
-      // Get Radio button title text
       WCHAR text[128] = {0};
       GetWindowTextW(pDIS->hwndItem, text, 128);
 
@@ -1609,11 +1915,14 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
         isChecked = (g_Settings.showMic && !g_Settings.showSystem);
       } else if (pDIS->CtlID == FLYOUT_CTRL_SYS_ONLY) {
         isChecked = (!g_Settings.showMic && g_Settings.showSystem);
+      } else if (pDIS->CtlID == FLYOUT_CTRL_LAYOUT_HORZ) {
+        isChecked = (_wcsicmp(g_Settings.layout, L"vertical") != 0);
+      } else if (pDIS->CtlID == FLYOUT_CTRL_LAYOUT_VERT) {
+        isChecked = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
       } else {
         isChecked = (SendMessageW(pDIS->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED);
       }
 
-      // Draw Radio circle glyph (16x16 at left)
       int circleX = rc.left + 2;
       int circleY = rc.top + (rc.bottom - rc.top - 16) / 2;
 
@@ -1622,10 +1931,7 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       HPEN hOldPen = (HPEN)SelectObject(hdc, hRingPen);
       HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
-      // Draw outer circle ring
       Ellipse(hdc, circleX, circleY, circleX + 16, circleY + 16);
-
-      // Draw inner active accent dot if checked
       if (isChecked) {
         SelectObject(hdc, hDotBrush);
         Ellipse(hdc, circleX + 3, circleY + 3, circleX + 13, circleY + 13);
@@ -1636,39 +1942,38 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
       DeleteObject(hRingPen);
       DeleteObject(hDotBrush);
 
-
-      // Draw 100% solid, crisp, bright white text label
       SetBkMode(hdc, TRANSPARENT);
       SetTextColor(hdc, RGB(245, 245, 255));
       HFONT hFont = (HFONT)SendMessageW(pDIS->hwndItem, WM_GETFONT, 0, 0);
       HFONT hOldFont = nullptr;
-      if (hFont) hOldFont = (HFONT)SelectObject(hdc, hFont);
+      if (hFont)
+        hOldFont = (HFONT)SelectObject(hdc, hFont);
 
       RECT textRc = rc;
-      textRc.left += 24; // Offset text after radio circle
+      textRc.left += 24;
       DrawTextW(hdc, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-      if (hOldFont) SelectObject(hdc, hOldFont);
+      if (hOldFont)
+        SelectObject(hdc, hOldFont);
       return TRUE;
     }
     return 0;
   }
 
   case WM_HSCROLL: {
-    // Opacity trackbar
     HWND hSlider = GetDlgItem(hWnd, FLYOUT_CTRL_OPACITY);
     if ((HWND)lParam == hSlider) {
       int val = (int)SendMessageW(hSlider, TBM_GETPOS, 0, 0);
       g_Settings.opacity = val;
       Wh_SetIntValue(L"rt_opacity", val);
-      // Update live percentage label
       HWND hLbl = GetDlgItem(hWnd, FLYOUT_CTRL_OP_LBL);
       if (hLbl) {
         WCHAR buf[16];
         swprintf_s(buf, L"%d%%", val);
         SetWindowTextW(hLbl, buf);
       }
-      if (g_hHudWnd) InvalidateRect(g_hHudWnd, NULL, FALSE);
+      if (g_hHudWnd)
+        InvalidateRect(g_hHudWnd, NULL, FALSE);
     } else if ((HWND)lParam == GetDlgItem(hWnd, FLYOUT_CTRL_SCALE)) {
       int val = (int)SendMessageW((HWND)lParam, TBM_GETPOS, 0, 0);
       HWND hLbl = GetDlgItem(hWnd, FLYOUT_CTRL_SCALE_LBL);
@@ -1691,7 +1996,7 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
   }
 
   case WM_COMMAND: {
-    int id   = LOWORD(wParam);
+    int id = LOWORD(wParam);
     int notif = HIWORD(wParam);
     if (notif == BN_CLICKED) {
       HWND hBtn = (HWND)lParam;
@@ -1726,6 +2031,30 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
         InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_BOTH), NULL, FALSE);
         InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_MIC_ONLY), NULL, FALSE);
         InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_SYS_ONLY), NULL, FALSE);
+      } else if (id == FLYOUT_CTRL_LAYOUT_HORZ) {
+        StringCchCopyW(g_Settings.layout, 32, L"horizontal");
+        Wh_SetStringValue(L"rt_layout", L"horizontal");
+        SendMessageW(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_HORZ), BM_SETCHECK, BST_CHECKED, 0);
+        SendMessageW(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_VERT), BM_SETCHECK, BST_UNCHECKED, 0);
+        InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_HORZ), NULL, FALSE);
+        InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_VERT), NULL, FALSE);
+        if (g_hHudWnd) {
+          PositionHudWindow();
+          InitDirectComposition(g_hHudWnd);
+          InvalidateRect(g_hHudWnd, NULL, FALSE);
+        }
+      } else if (id == FLYOUT_CTRL_LAYOUT_VERT) {
+        StringCchCopyW(g_Settings.layout, 32, L"vertical");
+        Wh_SetStringValue(L"rt_layout", L"vertical");
+        SendMessageW(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_HORZ), BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_VERT), BM_SETCHECK, BST_CHECKED, 0);
+        InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_HORZ), NULL, FALSE);
+        InvalidateRect(GetDlgItem(hWnd, FLYOUT_CTRL_LAYOUT_VERT), NULL, FALSE);
+        if (g_hHudWnd) {
+          PositionHudWindow();
+          InitDirectComposition(g_hHudWnd);
+          InvalidateRect(g_hHudWnd, NULL, FALSE);
+        }
       } else if (id == FLYOUT_CTRL_SHOWLABELS) {
         g_Settings.showLabels = checked;
         Wh_SetIntValue(L"rt_showLabels", checked);
@@ -1734,15 +2063,18 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
         Wh_SetIntValue(L"rt_clickThrough", checked);
         if (g_hHudWnd) {
           LONG_PTR ex = GetWindowLongPtrW(g_hHudWnd, GWL_EXSTYLE);
-          if (checked) ex |=  WS_EX_TRANSPARENT;
-          else         ex &= ~WS_EX_TRANSPARENT;
+          if (checked)
+            ex |= WS_EX_TRANSPARENT;
+          else
+            ex &= ~WS_EX_TRANSPARENT;
           SetWindowLongPtrW(g_hHudWnd, GWL_EXSTYLE, ex);
         }
       } else if (id == FLYOUT_CTRL_PEAKHOLD) {
         g_Settings.enablePeakHold = checked;
         Wh_SetIntValue(L"rt_enablePeakHold", checked);
       }
-      if (g_hHudWnd) InvalidateRect(g_hHudWnd, NULL, FALSE);
+      if (g_hHudWnd)
+        InvalidateRect(g_hHudWnd, NULL, FALSE);
     } else if (notif == CBN_SELCHANGE && id == FLYOUT_CTRL_MIC_COMBO) {
       HWND hCombo = (HWND)lParam;
       int index = (int)SendMessageW(hCombo, CB_GETCURSEL, 0, 0);
@@ -1751,23 +2083,22 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
         SendMessageW(hCombo, CB_GETLBTEXT, index, (LPARAM)selText);
         StringCchCopyW(g_Settings.micDevice, 256, selText);
         Wh_SetStringValue(L"rt_micDevice", selText);
-        
-        // Re-initialize audio tracker for mic with new device
         InitAudioTracker(eCapture, g_MicTracker);
-        if (g_hHudWnd) InvalidateRect(g_hHudWnd, NULL, FALSE);
+        if (g_hHudWnd)
+          InvalidateRect(g_hHudWnd, NULL, FALSE);
       }
     }
     return 0;
   }
 
-
   case WM_KEYDOWN:
-    if (wParam == VK_ESCAPE) DismissFlyout();
+    if (wParam == VK_ESCAPE)
+      DismissFlyout();
     return 0;
 
   case WM_ACTIVATE:
-    // Dismiss when flyout loses activation (user clicked elsewhere)
-    if (LOWORD(wParam) == WA_INACTIVE) DismissFlyout();
+    if (LOWORD(wParam) == WA_INACTIVE)
+      DismissFlyout();
     return 0;
 
   case WM_DESTROY:
@@ -1780,123 +2111,149 @@ static LRESULT CALLBACK FlyoutWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
 }
 
 static void ShowSettingsFlyout() {
-  // Toggle: dismiss if already open
   if (g_hFlyoutWnd) {
     DismissFlyout();
     return;
   }
 
-  if (!g_hHudWnd) return;
+  if (!g_hHudWnd)
+    return;
 
-  // Position flyout: bottom-left of the ⋮ button, aligned to HUD right edge
   RECT hudRect;
   GetWindowRect(g_hHudWnd, &hudRect);
 
   const int FLY_W = 250;
-  const int FLY_H = 400;
+  const int FLY_H = 470;
 
-  int x = hudRect.right  - FLY_W - 4;
+  BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
+  int x = isVertical ? (hudRect.left + (hudRect.right - hudRect.left) / 2 - FLY_W / 2)
+                     : (hudRect.right - FLY_W - 4);
   int y = hudRect.bottom + 6;
 
-  // Flip above HUD if flyout would go off-screen bottom
+  int screenW = GetSystemMetrics(SM_CXSCREEN);
   int screenH = GetSystemMetrics(SM_CYSCREEN);
-  if (y + FLY_H > screenH) y = hudRect.top - FLY_H - 6;
-  // Clamp to screen left
-  if (x < 4) x = 4;
+  if (y + FLY_H > screenH)
+    y = hudRect.top - FLY_H - 6;
+  if (x + FLY_W > screenW - 4)
+    x = screenW - FLY_W - 4;
+  if (x < 4)
+    x = 4;
 
-  g_hFlyoutWnd = CreateWindowExW(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-      FLYOUT_WINDOW_CLASS, L"",
-      WS_POPUP | WS_CLIPCHILDREN,
-      x, y, FLY_W, FLY_H,
-      NULL, NULL, GetModuleHandle(NULL), NULL);
+  g_hFlyoutWnd =
+      CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, FLYOUT_WINDOW_CLASS,
+                      L"", WS_POPUP | WS_CLIPCHILDREN, x, y, FLY_W, FLY_H, NULL,
+                      NULL, GetModuleHandle(NULL), NULL);
 
-  if (!g_hFlyoutWnd) return;
+  if (!g_hFlyoutWnd)
+    return;
 
   EnableDarkModeForControl(g_hFlyoutWnd);
 
-  // DWM dark title bar + rounded corners (DWMWCP_ROUND)
   BOOL darkMode = TRUE;
   DwmSetWindowAttribute(g_hFlyoutWnd, 20, &darkMode, sizeof(darkMode));
   DWORD cornerPref = 2; // DWMWCP_ROUND
   DwmSetWindowAttribute(g_hFlyoutWnd, 33, &cornerPref, sizeof(cornerPref));
 
-
-  HFONT hControlFont = CreateFontW(-13, 0, 0, 0, FW_REGULAR, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  HFONT hControlFont =
+      CreateFontW(-13, 0, 0, 0, FW_REGULAR, FALSE, FALSE, FALSE,
+                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
   HMODULE hInst = GetModuleHandle(NULL);
   const int PAD_X = 14;
   const int SLIDER_Y = 12;
   const int ROW_H = 24;
 
-  // Helper to style controls with font & transparent uxtheme override
   auto ApplyControlStyle = [&](HWND hCtrl) {
-    if (!hCtrl) return;
+    if (!hCtrl)
+      return;
     EnableDarkModeForControl(hCtrl);
-    if (hControlFont) SendMessageW(hCtrl, WM_SETFONT, (WPARAM)hControlFont, TRUE);
+    if (hControlFont)
+      SendMessageW(hCtrl, WM_SETFONT, (WPARAM)hControlFont, TRUE);
   };
 
   // ── Opacity Row ──────────────────────────────────────────────
   HWND hSlider = CreateWindowExW(0, TRACKBAR_CLASS, L"",
-      WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
-      PAD_X + 80, SLIDER_Y, 102, 26,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_OPACITY, hInst, NULL);
+                                 WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
+                                 PAD_X + 80, SLIDER_Y, 102, 26, g_hFlyoutWnd,
+                                 (HMENU)FLYOUT_CTRL_OPACITY, hInst, NULL);
   SendMessageW(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-  SendMessageW(hSlider, TBM_SETPOS,   TRUE, g_Settings.opacity);
+  SendMessageW(hSlider, TBM_SETPOS, TRUE, g_Settings.opacity);
   ApplyControlStyle(hSlider);
 
-  // Percentage label next to slider
   WCHAR opBuf[16];
   swprintf_s(opBuf, L"%d%%", g_Settings.opacity);
-  HWND hOpLbl = CreateWindowExW(0, L"STATIC", opBuf,
-      WS_CHILD | WS_VISIBLE | SS_CENTER,
-      PAD_X + 80 + 106, SLIDER_Y + 4, 36, 18,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_OP_LBL, hInst, NULL);
+  HWND hOpLbl =
+      CreateWindowExW(0, L"STATIC", opBuf, WS_CHILD | WS_VISIBLE | SS_CENTER,
+                      PAD_X + 80 + 106, SLIDER_Y + 4, 36, 18, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_OP_LBL, hInst, NULL);
   ApplyControlStyle(hOpLbl);
 
   // ── HUD Scale Row ────────────────────────────────────────────
-  HWND hScaleSlider = CreateWindowExW(0, TRACKBAR_CLASS, L"",
-      WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
-      PAD_X + 80, 58, 102, 26,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SCALE, hInst, NULL);
+  HWND hScaleSlider = CreateWindowExW(
+      0, TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
+      PAD_X + 80, 58, 102, 26, g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SCALE, hInst,
+      NULL);
   SendMessageW(hScaleSlider, TBM_SETRANGE, TRUE, MAKELPARAM(25, 100));
-  SendMessageW(hScaleSlider, TBM_SETPOS,   TRUE, g_Settings.hudScale);
+  SendMessageW(hScaleSlider, TBM_SETPOS, TRUE, g_Settings.hudScale);
   ApplyControlStyle(hScaleSlider);
-
 
   WCHAR scaleBuf[16];
   swprintf_s(scaleBuf, L"%d%%", g_Settings.hudScale);
-  HWND hScaleLbl = CreateWindowExW(0, L"STATIC", scaleBuf,
-      WS_CHILD | WS_VISIBLE | SS_CENTER,
-      PAD_X + 80 + 106, 58 + 4, 36, 18,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SCALE_LBL, hInst, NULL);
+  HWND hScaleLbl =
+      CreateWindowExW(0, L"STATIC", scaleBuf, WS_CHILD | WS_VISIBLE | SS_CENTER,
+                      PAD_X + 80 + 106, 58 + 4, 36, 18, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_SCALE_LBL, hInst, NULL);
   ApplyControlStyle(hScaleLbl);
 
+  // ── Orientation Row ──────────────────────────────────────────
+  HWND hRadHorz =
+      CreateWindowExW(0, WC_BUTTON, L"Horizontal Bar (Default)",
+                      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_GROUP,
+                      PAD_X + 2, 124, FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_LAYOUT_HORZ, hInst, NULL);
+  ApplyControlStyle(hRadHorz);
+
+  HWND hRadVert =
+      CreateWindowExW(0, WC_BUTTON, L"Vertical Sidebar",
+                      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                      PAD_X + 2, 148, FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_LAYOUT_VERT, hInst, NULL);
+  ApplyControlStyle(hRadVert);
+
+  if (_wcsicmp(g_Settings.layout, L"vertical") == 0) {
+    SendMessageW(hRadVert, BM_SETCHECK, BST_CHECKED, 0);
+  } else {
+    SendMessageW(hRadHorz, BM_SETCHECK, BST_CHECKED, 0);
+  }
+
   // ── Display Row ──────────────────────────────────────────────
-  HWND hRadBoth = CreateWindowExW(0, WC_BUTTON, L"Show Both Meters",
-      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_GROUP,
-      PAD_X + 2, 130, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_BOTH, hInst, NULL);
+  HWND hRadBoth =
+      CreateWindowExW(0, WC_BUTTON, L"Show Both Meters",
+                      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_GROUP,
+                      PAD_X + 2, 204, FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_BOTH, hInst, NULL);
   ApplyControlStyle(hRadBoth);
-  
-  HWND hRadMic = CreateWindowExW(0, WC_BUTTON, L"Show Microphone Only",
-      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-      PAD_X + 2, 154, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_MIC_ONLY, hInst, NULL);
+
+  HWND hRadMic = CreateWindowExW(
+      0, WC_BUTTON, L"Show Microphone Only",
+      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, PAD_X + 2, 228, FLY_W - PAD_X * 2,
+      ROW_H, g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_MIC_ONLY, hInst, NULL);
   ApplyControlStyle(hRadMic);
-      
-  HWND hRadSys = CreateWindowExW(0, WC_BUTTON, L"Show System Output Only",
-      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-      PAD_X + 2, 178, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SYS_ONLY, hInst, NULL);
+
+  HWND hRadSys = CreateWindowExW(
+      0, WC_BUTTON, L"Show System Output Only",
+      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, PAD_X + 2, 252, FLY_W - PAD_X * 2,
+      ROW_H, g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SYS_ONLY, hInst, NULL);
   ApplyControlStyle(hRadSys);
 
-
-  HWND hShowLblChk = CreateWindowExW(0, WC_BUTTON, L"  Show Text Labels (\"Mic\" / \"System\")",
-      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      PAD_X + 2, 204, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SHOWLABELS, hInst, NULL);
-  SendMessageW(hShowLblChk, BM_SETCHECK, g_Settings.showLabels ? BST_CHECKED : BST_UNCHECKED, 0);
+  HWND hShowLblChk = CreateWindowExW(
+      0, WC_BUTTON, L"  Show Text Labels (\"Mic\" / \"System\")",
+      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, PAD_X + 2, 278,
+      FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_SHOWLABELS,
+      hInst, NULL);
+  SendMessageW(hShowLblChk, BM_SETCHECK,
+               g_Settings.showLabels ? BST_CHECKED : BST_UNCHECKED, 0);
   ApplyControlStyle(hShowLblChk);
 
   if (g_Settings.showMic && g_Settings.showSystem) {
@@ -1908,35 +2265,43 @@ static void ShowSettingsFlyout() {
   }
 
   // ── Input Device Row ──────────────────────────────────────────
-  HWND hMicCombo = CreateWindowExW(0, WC_COMBOBOX, L"",
-      CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_CHILD | WS_OVERLAPPED | WS_VISIBLE | WS_VSCROLL,
-      PAD_X, 262, FLY_W - PAD_X * 2, 200, // 200 is dropdown list height
+  HWND hMicCombo = CreateWindowExW(
+      0, WC_COMBOBOX, L"",
+      CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_CHILD | WS_OVERLAPPED |
+          WS_VISIBLE | WS_VSCROLL,
+      PAD_X, 336, FLY_W - PAD_X * 2, 200,
       g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_MIC_COMBO, hInst, NULL);
   ApplyControlStyle(hMicCombo);
 
-  // Populate Combobox with active capture AND render endpoints (Voicemeeter outputs / inputs / microphones)
   SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)L"default");
   SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)L"communications");
 
   IMMDeviceEnumerator *pEnum = nullptr;
   if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
-                                 __uuidof(IMMDeviceEnumerator), (void **)&pEnum))) {
+                                 __uuidof(IMMDeviceEnumerator),
+                                 (void **)&pEnum))) {
     auto AddEndpointsToCombo = [&](EDataFlow flow) {
       IMMDeviceCollection *pCol = nullptr;
-      if (SUCCEEDED(pEnum->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &pCol)) && pCol) {
+      if (SUCCEEDED(
+              pEnum->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &pCol)) &&
+          pCol) {
         UINT count = 0;
         pCol->GetCount(&count);
         for (UINT i = 0; i < count; i++) {
           IMMDevice *pEndpoint = nullptr;
           if (SUCCEEDED(pCol->Item(i, &pEndpoint)) && pEndpoint) {
             IPropertyStore *pProps = nullptr;
-            if (SUCCEEDED(pEndpoint->OpenPropertyStore(STGM_READ, &pProps)) && pProps) {
+            if (SUCCEEDED(pEndpoint->OpenPropertyStore(STGM_READ, &pProps)) &&
+                pProps) {
               PROPVARIANT varName;
               PropVariantInit(&varName);
-              if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
+              if (SUCCEEDED(
+                      pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
                 if (varName.vt == VT_LPWSTR && varName.pwszVal) {
-                  if (SendMessageW(hMicCombo, CB_FINDSTRINGEXACT, -1, (LPARAM)varName.pwszVal) == CB_ERR) {
-                    SendMessageW(hMicCombo, CB_ADDSTRING, 0, (LPARAM)varName.pwszVal);
+                  if (SendMessageW(hMicCombo, CB_FINDSTRINGEXACT, -1,
+                                   (LPARAM)varName.pwszVal) == CB_ERR) {
+                    SendMessageW(hMicCombo, CB_ADDSTRING, 0,
+                                 (LPARAM)varName.pwszVal);
                   }
                 }
                 PropVariantClear(&varName);
@@ -1955,31 +2320,35 @@ static void ShowSettingsFlyout() {
     pEnum->Release();
   }
 
-  // Pre-select the matching string
   if (wcslen(g_Settings.micDevice) > 0) {
-    int index = (int)SendMessageW(hMicCombo, CB_FINDSTRINGEXACT, -1, (LPARAM)g_Settings.micDevice);
+    int index = (int)SendMessageW(hMicCombo, CB_FINDSTRINGEXACT, -1,
+                                  (LPARAM)g_Settings.micDevice);
     if (index != CB_ERR) {
       SendMessageW(hMicCombo, CB_SETCURSEL, index, 0);
     } else {
-      // Try partial match if exact fails
-      index = (int)SendMessageW(hMicCombo, CB_FINDSTRING, -1, (LPARAM)g_Settings.micDevice);
-      if (index != CB_ERR) SendMessageW(hMicCombo, CB_SETCURSEL, index, 0);
+      index = (int)SendMessageW(hMicCombo, CB_FINDSTRING, -1,
+                                (LPARAM)g_Settings.micDevice);
+      if (index != CB_ERR)
+        SendMessageW(hMicCombo, CB_SETCURSEL, index, 0);
     }
   }
 
   // ── Behavior Row ─────────────────────────────────────────────
-  HWND hCtChk = CreateWindowExW(0, WC_BUTTON, L"  Click-Through",
-      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      PAD_X + 2, 324, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_CLICKTHRU, hInst, NULL);
-  SendMessageW(hCtChk, BM_SETCHECK, g_Settings.clickThrough ? BST_CHECKED : BST_UNCHECKED, 0);
+  HWND hCtChk = CreateWindowExW(
+      0, WC_BUTTON, L"  Click-Through", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+      PAD_X + 2, 396, FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd,
+      (HMENU)FLYOUT_CTRL_CLICKTHRU, hInst, NULL);
+  SendMessageW(hCtChk, BM_SETCHECK,
+               g_Settings.clickThrough ? BST_CHECKED : BST_UNCHECKED, 0);
   ApplyControlStyle(hCtChk);
 
-  HWND hPkChk = CreateWindowExW(0, WC_BUTTON, L"  Show Peak Hold Marker",
-      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      PAD_X + 2, 348, FLY_W - PAD_X * 2, ROW_H,
-      g_hFlyoutWnd, (HMENU)FLYOUT_CTRL_PEAKHOLD, hInst, NULL);
-  SendMessageW(hPkChk, BM_SETCHECK, g_Settings.enablePeakHold ? BST_CHECKED : BST_UNCHECKED, 0);
+  HWND hPkChk =
+      CreateWindowExW(0, WC_BUTTON, L"  Show Peak Hold Marker",
+                      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, PAD_X + 2, 420,
+                      FLY_W - PAD_X * 2, ROW_H, g_hFlyoutWnd,
+                      (HMENU)FLYOUT_CTRL_PEAKHOLD, hInst, NULL);
+  SendMessageW(hPkChk, BM_SETCHECK,
+               g_Settings.enablePeakHold ? BST_CHECKED : BST_UNCHECKED, 0);
   ApplyControlStyle(hPkChk);
 
   ShowWindow(g_hFlyoutWnd, SW_SHOWNOACTIVATE);
@@ -2020,13 +2389,22 @@ static LRESULT CALLBACK HudWndProc(HWND hWnd, UINT message, WPARAM wParam,
   case WM_LBUTTONDOWN: {
     if (!g_Settings.clickThrough) {
       int x = GET_X_LPARAM(lParam);
+      int y = GET_Y_LPARAM(lParam);
       RECT rc;
       GetClientRect(hWnd, &rc);
       float scale = g_Settings.hudScale / 100.0f;
-      if (scale < 0.25f) scale = 0.25f;
-      int hitArea = (int)roundf(35 * scale);
-      if (x >= rc.right - hitArea) {
-        ShowSettingsFlyout();
+      if (scale < 0.25f)
+        scale = 0.25f;
+      BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
+      if (isVertical) {
+        if (y <= (int)roundf(32 * scale)) {
+          ShowSettingsFlyout();
+        }
+      } else {
+        int hitArea = (int)roundf(35 * scale);
+        if (x >= rc.right - hitArea) {
+          ShowSettingsFlyout();
+        }
       }
     }
     return 0;
@@ -2057,7 +2435,10 @@ static LRESULT CALLBACK HudWndProc(HWND hWnd, UINT message, WPARAM wParam,
       PositionHudWindow();
       if (g_hFlyoutWnd) {
         HWND hChk = GetDlgItem(g_hFlyoutWnd, FLYOUT_CTRL_CLICKTHRU);
-        if (hChk) SendMessageW(hChk, BM_SETCHECK, g_Settings.clickThrough ? BST_CHECKED : BST_UNCHECKED, 0);
+        if (hChk)
+          SendMessageW(hChk, BM_SETCHECK,
+                       g_Settings.clickThrough ? BST_CHECKED : BST_UNCHECKED,
+                       0);
       }
       InvalidateRect(hWnd, NULL, FALSE);
     }
@@ -2074,10 +2455,18 @@ static LRESULT CALLBACK HudWndProc(HWND hWnd, UINT message, WPARAM wParam,
     RECT rc;
     GetClientRect(hWnd, &rc);
     float scale = g_Settings.hudScale / 100.0f;
-    if (scale < 0.25f) scale = 0.25f;
-    int hitArea = (int)roundf(35 * scale);
-    if (pt.x >= rc.right - hitArea) {
-      return HTCLIENT; // Allow LBUTTONDOWN on the dots
+    if (scale < 0.25f)
+      scale = 0.25f;
+    BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
+    if (isVertical) {
+      if (pt.y <= (int)roundf(32 * scale)) {
+        return HTCLIENT; // Allow clicking three-dot menu at top of vertical HUD
+      }
+    } else {
+      int hitArea = (int)roundf(35 * scale);
+      if (pt.x >= rc.right - hitArea) {
+        return HTCLIENT; // Allow LBUTTONDOWN on the dots
+      }
     }
     return HTCAPTION; // Allow dragging everywhere else
   }
@@ -2149,20 +2538,31 @@ static DWORD WINAPI HudThreadProc(LPVOID lpParam) {
   fw.hCursor = LoadCursor(NULL, IDC_ARROW);
   RegisterClassW(&fw);
 
+  // Ensure any existing orphaned overlay window instance is destroyed first
+  HWND hExisting = FindWindowW(HUD_WINDOW_CLASS, NULL);
+  if (hExisting) {
+    SendMessageW(hExisting, WM_CLOSE, 0, 0);
+    Sleep(50);
+  }
+
   // Create Topmost Window in ZBID_UIACCESS System Band for DirectComposition
   float scale = g_Settings.hudScale / 100.0f;
-  if (scale < 0.25f) scale = 0.25f;
+  if (scale < 0.25f)
+    scale = 0.25f;
 
-  DWORD exStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
+  BOOL isVertical = (_wcsicmp(g_Settings.layout, L"vertical") == 0);
+  int baseW = isVertical ? 104 : 500;
+  int baseH = isVertical ? 420 : 104;
+
+  DWORD exStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+                  WS_EX_NOREDIRECTIONBITMAP;
   if (g_Settings.clickThrough) {
     exStyle |= (WS_EX_LAYERED | WS_EX_TRANSPARENT);
   }
 
   g_hHudWnd = CreateOverlayWindowInBand(
-      exStyle,
-      HUD_WINDOW_CLASS, L"Audio Level HUD", WS_POPUP, 0, 0, 
-      (int)roundf(500 * scale),
-      (int)roundf(104 * scale));
+      exStyle, HUD_WINDOW_CLASS, L"Audio Level HUD", WS_POPUP, 0, 0,
+      (int)roundf(baseW * scale), (int)roundf(baseH * scale));
 
   if (!g_hHudWnd) {
     CoUninitialize();
@@ -2182,9 +2582,8 @@ static DWORD WINAPI HudThreadProc(LPVOID lpParam) {
   InitAudioTracker(eRender, g_SystemTracker);
 
   ShowWindow(g_hHudWnd, g_bHudVisible ? SW_SHOWNOACTIVATE : SW_HIDE);
-  if (g_bHudVisible) UpdateWindow(g_hHudWnd);
-
-
+  if (g_bHudVisible)
+    UpdateWindow(g_hHudWnd);
 
   // Message Pump Loop
   MSG msg;
@@ -2232,14 +2631,23 @@ BOOL Wh_ModInit() {
 void Wh_ModUninit() {
   Wh_Log(L"Uninitializing Audio Level HUD mod...");
 
+  DismissFlyout();
+
   if (g_hHudWnd) {
-    PostMessageW(g_hHudWnd, WM_CLOSE, 0, 0);
+    SendMessageW(g_hHudWnd, WM_CLOSE, 0, 0);
   }
 
   if (g_hHudThread) {
-    WaitForSingleObject(g_hHudThread, 2000);
+    if (WaitForSingleObject(g_hHudThread, 1000) == WAIT_TIMEOUT) {
+      TerminateThread(g_hHudThread, 0);
+    }
     CloseHandle(g_hHudThread);
     g_hHudThread = NULL;
+  }
+
+  HWND hLingering = NULL;
+  while ((hLingering = FindWindowW(HUD_WINDOW_CLASS, NULL)) != NULL) {
+    DestroyWindow(hLingering);
   }
 
   Wh_Log(L"Audio Level HUD uninitialized.");
