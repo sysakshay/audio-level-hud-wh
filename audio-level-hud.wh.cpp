@@ -5,6 +5,7 @@
 // @version         1.0.0
 // @author          AKS HAY
 // @github          https://github.com/sysakshay
+// @license         GPL-3.0
 // @include         explorer.exe
 // @compilerOptions -lole32 -lmmdevapi -ld3d11 -ldxgi -ldcomp -ld2d1 -ldwrite -luser32 -lgdi32 -ldwmapi -lcomctl32 -luxtheme
 // ==/WindhawkMod==
@@ -293,6 +294,7 @@ static HWND g_hFlyoutWnd = NULL; // Settings flyout popup window
 static HBRUSH g_hFlyoutBgBrush =
     NULL; // Reusable dark bg brush for flyout controls
 static HANDLE g_hHudThread = NULL;
+static HANDLE g_hStopEvent = NULL;
 static DWORD g_dwThreadId = 0;
 static BOOL g_bHudVisible = TRUE;
 
@@ -2540,10 +2542,13 @@ static DWORD WINAPI HudThreadProc(LPVOID lpParam) {
   // before we try to initialize COM, Audio Endpoints, and DirectComposition.
   int waitCount = 0;
   while (!FindWindowW(L"Shell_TrayWnd", NULL) && waitCount < 60) {
-    Sleep(500);
+    if (WaitForSingleObject(g_hStopEvent, 500) == WAIT_OBJECT_0)
+      return 0;
     waitCount++;
   }
-  Sleep(1000); // Extra buffer for audio services to spin up
+  // Extra buffer for audio services to spin up.
+  if (WaitForSingleObject(g_hStopEvent, 1000) == WAIT_OBJECT_0)
+    return 0;
 
   CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
@@ -2568,11 +2573,11 @@ static DWORD WINAPI HudThreadProc(LPVOID lpParam) {
   fw.hCursor = LoadCursor(NULL, IDC_ARROW);
   RegisterClassW(&fw);
 
-  // Ensure any existing orphaned overlay window instance is destroyed first
-  HWND hExisting = FindWindowW(HUD_WINDOW_CLASS, NULL);
-  if (hExisting) {
-    SendMessageW(hExisting, WM_CLOSE, 0, 0);
-    Sleep(50);
+  if (WaitForSingleObject(g_hStopEvent, 0) == WAIT_OBJECT_0) {
+    UnregisterClassW(HUD_WINDOW_CLASS, GetModuleHandle(NULL));
+    UnregisterClassW(FLYOUT_WINDOW_CLASS, GetModuleHandle(NULL));
+    CoUninitialize();
+    return 0;
   }
 
   // Create Topmost Window in ZBID_UIACCESS System Band for DirectComposition
@@ -2595,6 +2600,16 @@ static DWORD WINAPI HudThreadProc(LPVOID lpParam) {
       (int)roundf(baseW * scale), (int)roundf(baseH * scale));
 
   if (!g_hHudWnd) {
+    UnregisterClassW(HUD_WINDOW_CLASS, GetModuleHandle(NULL));
+    UnregisterClassW(FLYOUT_WINDOW_CLASS, GetModuleHandle(NULL));
+    CoUninitialize();
+    return 0;
+  }
+
+  if (WaitForSingleObject(g_hStopEvent, 0) == WAIT_OBJECT_0) {
+    DestroyWindow(g_hHudWnd);
+    UnregisterClassW(HUD_WINDOW_CLASS, GetModuleHandle(NULL));
+    UnregisterClassW(FLYOUT_WINDOW_CLASS, GetModuleHandle(NULL));
     CoUninitialize();
     return 0;
   }
@@ -2646,10 +2661,16 @@ BOOL Wh_ModInit() {
 
   LoadModSettings();
 
+  g_hStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!g_hStopEvent)
+    return FALSE;
+
   // Spawn dedicated UI message loop thread
   g_hHudThread = CreateThread(NULL, 0, HudThreadProc, NULL, 0, &g_dwThreadId);
   if (!g_hHudThread) {
     Wh_Log(L"Failed to create Audio Level HUD thread.");
+    CloseHandle(g_hStopEvent);
+    g_hStopEvent = NULL;
     return FALSE;
   }
 
@@ -2661,23 +2682,21 @@ BOOL Wh_ModInit() {
 void Wh_ModUninit() {
   Wh_Log(L"Uninitializing Audio Level HUD mod...");
 
-  DismissFlyout();
+  if (g_hStopEvent)
+    SetEvent(g_hStopEvent);
 
   if (g_hHudWnd) {
     SendMessageW(g_hHudWnd, WM_CLOSE, 0, 0);
   }
 
   if (g_hHudThread) {
-    if (WaitForSingleObject(g_hHudThread, 1000) == WAIT_TIMEOUT) {
-      TerminateThread(g_hHudThread, 0);
-    }
+    WaitForSingleObject(g_hHudThread, INFINITE);
     CloseHandle(g_hHudThread);
     g_hHudThread = NULL;
   }
-
-  HWND hLingering = NULL;
-  while ((hLingering = FindWindowW(HUD_WINDOW_CLASS, NULL)) != NULL) {
-    DestroyWindow(hLingering);
+  if (g_hStopEvent) {
+    CloseHandle(g_hStopEvent);
+    g_hStopEvent = NULL;
   }
 
   Wh_Log(L"Audio Level HUD uninitialized.");
